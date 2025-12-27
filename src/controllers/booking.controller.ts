@@ -318,7 +318,7 @@ export const getTripBookings = async (
     const bookingsWithPassengers = await Promise.all(
       tripBookings.map(async (booking) => {
         const passenger = await db.query.users.findFirst({
-          where: eq(users.userId, booking.riderId!),
+          where: eq(users.userId, booking.tripId!),
         });
         return { ...booking, passenger };
       })
@@ -547,7 +547,7 @@ export const getPendingRideRequests = async (
         .map(async (booking) => {
           const [rider, trip] = await Promise.all([
             db.query.users.findFirst({
-              where: eq(users.userId, booking.riderId!),
+              where: eq(users.userId, booking.tripId!),
             }),
             db.query.trips.findFirst({
               where: eq(trips.tripId, booking.tripId!),
@@ -559,21 +559,9 @@ export const getPendingRideRequests = async (
             tripId: booking.tripId,
             seatsBooked: booking.seatsBooked,
             amount: booking.amount,
-            startLocation: booking.startLocation,
-            endLocation: booking.endLocation,
-            pickupLatitude: booking.pickupLatitude
-              ? parseFloat(booking.pickupLatitude)
-              : null,
-            pickupLongitude: booking.pickupLongitude
-              ? parseFloat(booking.pickupLongitude)
-              : null,
-            dropoffLatitude: booking.dropoffLatitude
-              ? parseFloat(booking.dropoffLatitude)
-              : null,
-            dropoffLongitude: booking.dropoffLongitude
-              ? parseFloat(booking.dropoffLongitude)
-              : null,
-            departureTime: booking.departureTime,
+            startLocation: booking.pickupLocation,
+            endLocation: booking.dropLocation,
+            departureTime: booking.dropTime,
             createdAt: booking.createdAt,
             rider: {
               userId: rider?.userId,
@@ -654,7 +642,7 @@ export const acceptRideRequest = async (
     await db
       .update(trips)
       .set({
-        seats: currentTrip.seats - (booking.seatsBooked || 0),
+        availableSeats: currentTrip.seats - (booking.seatsBooked || 0),
         updatedAt: new Date(),
       })
       .where(eq(trips.tripId, booking.tripId!));
@@ -664,13 +652,13 @@ export const acceptRideRequest = async (
       const [rider] = await db
         .select()
         .from(users)
-        .where(eq(users.userId, booking.riderId!));
+        .where(eq(users.userId, booking.tripId!));
 
       if (rider?.expoPushToken) {
         const result = await sendFirebaseNotification({
           token: rider.expoPushToken,
           title: "Ride Request Accepted! 🎉",
-          body: `Your ride request from ${booking.startLocation} to ${booking.endLocation} has been accepted by the driver.`,
+          body: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} has been accepted by the driver.`,
           data: {
             type: "ride_accepted",
             bookingId: String(booking.bookingId),
@@ -755,13 +743,13 @@ export const rejectRideRequest = async (
       const [rider] = await db
         .select()
         .from(users)
-        .where(eq(users.userId, booking.riderId!));
+        .where(eq(users.userId, booking.tripId!));
 
       if (rider?.expoPushToken) {
         const result = await sendFirebaseNotification({
           token: rider.expoPushToken,
           title: "Ride Request Declined",
-          body: `Your ride request from ${booking.startLocation} to ${booking.endLocation} was declined by the driver. Please search for another ride.`,
+          body: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} was declined by the driver. Please search for another ride.`,
           data: {
             type: "ride_rejected",
             bookingId: String(booking.bookingId),
@@ -813,7 +801,7 @@ export const cancelBooking = async (
     const booking = await db.query.bookings.findFirst({
       where: and(
         eq(bookings.bookingId, parseInt(bookingId)),
-        eq(bookings.riderId, userId)
+        eq(bookings.tripId, userId)
       ),
       with: {
         trip: true,
@@ -877,7 +865,7 @@ export const cancelBooking = async (
       await db
         .update(trips)
         .set({
-          seats: newSeats,
+          availableSeats: newSeats,
           updatedAt: new Date(),
         })
         .where(eq(trips.tripId, booking.tripId!));
@@ -997,7 +985,7 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
           .set({
             availableSeats: sql`${trips.availableSeats} - ${booking.seats_booked}`,
           })
-          .where(eq(trips.tripId, parseInt(booking.trip_id)));
+          .where(eq(trips.tripId, Number(booking.trip_id)));
       }
 
       // Reverting accepted booking
@@ -1007,7 +995,7 @@ export const updateBookingStatus = async (req: Request, res: Response) => {
           .set({
             availableSeats: sql`${trips.availableSeats} + ${booking.seats_booked}`,
           })
-          .where(eq(trips.tripId, parseInt(booking.trip_id)));
+          .where(eq(trips.tripId, Number(booking.trip_id)));
       }
 
       /* 4️⃣ Update booking status */
