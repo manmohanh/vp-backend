@@ -11,10 +11,12 @@ dist/
 
 # Firebase credentials (NEVER commit these!)
 credentials/
-*.json
+# *.json
 
 # Drizzle migrations
-/drizzle/*.sql
+drizzle/**/*.sql
+drizzle/**/*.json
+
 
 # Logs
 npm-debug.log*
