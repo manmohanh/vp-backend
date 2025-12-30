@@ -928,10 +928,10 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           eq(users.active, true),
           eq(vehicles.active, true),
           eq(sql`DATE(${trips.tripDate})`, tripDate),
-          ne(trips.driverId, req.user?.userId)
+          ne(trips.driverId, req.user?.userId),
 
           // Trip date must be current or future
-          // sql`${trips.tripDate} >= ${currentDate.toISOString().split("T")[0]}`,
+          sql`${trips.tripDate} >= ${currentDate.toISOString().split("T")[0]}`,
         )
       )
       .orderBy(
