@@ -47,8 +47,6 @@ export const createTrip = async (
       remarks,
     } = req.body;
 
-    console.log("body", req.body);
-
     // Validate required fields
     if (!vehicleId || !startLocation || !endLocation || !seats) {
       throw new Error(
@@ -1171,12 +1169,47 @@ export const getTripDetails = async (
       return;
     }
 
-    const trip = await db.query.trips.findFirst({
-      where: eq(trips.tripId, parseInt(tripId)),
-      with: {
-        vehicle: true,
-        driver: true,
-      },
+    const [trip, newBookings] = await db.transaction(async (tx) => {
+      const trip = await tx.query.trips.findFirst({
+        where: eq(trips.tripId, parseInt(tripId)),
+        with: {
+          vehicle: {
+            columns: {
+              model: true,
+              licensePlate: true,
+              type: true,
+              capacity:true
+            },
+          },
+          driver: {
+            columns: {
+              userId: true,
+              firstname: true,
+              lastname: true,
+              email: true,
+              photo: true,
+              mobile: true,
+            },
+          },
+        },
+      });
+
+      const newBookings = await tx.query.bookings.findMany({
+        where: eq(bookings.tripId, parseInt(tripId)),
+        with: {
+          bookedBy: {
+            columns: {
+              userId: true,
+              firstname: true,
+              lastname: true,
+              email: true,
+              photo: true,
+              mobile: true,
+            },
+          },
+        },
+      });
+      return [trip, newBookings];
     });
 
     if (!trip) {
@@ -1184,59 +1217,36 @@ export const getTripDetails = async (
       return;
     }
 
-    res.json({
-      trip: {
-        tripId: trip.tripId,
-        vehicleId: trip.vehicleId,
-        driverId: trip.driverId,
-        startLocation: trip.startLocation,
-        endLocation: trip.endLocation,
-        departureTime: trip.departureTime,
-        arrivalTime: trip.arrivalTime,
-        seats: trip.availableSeats,
-        distanceFlexibility: trip.distanceFlexibility,
-        timeFlexibility: trip.timeFlexibility,
-        expectedFare: trip.expectedFare,
-        status: trip.status,
-        remarks: trip.remarks,
-        active: trip.active,
-        vehicle: trip.vehicle,
-        driver: trip.driver,
-        createdAt: trip.createdAt,
-        updatedAt: trip.updatedAt,
-      },
-    });
+    res.json({ trip, newBookings });
   } catch (error) {
     console.error("Get trip details error:", error);
     res.status(500).json({ error: "Error fetching trip details" });
   }
 };
 
-
 export const getOfferedRides = async (req: AuthRequest, res: Response) => {
   const userId = req.user.userId;
 
-const rides = await db
-  .select({
-    tripId: trips.tripId,
-    startAddress: trips.startAddress,
-    endAddress: trips.endAddress,
-    tripDate: trips.tripDate,
-    departureTime: trips.departureTime,
-    availableSeats: trips.availableSeats,
-    expectedFare: trips.expectedFare,
-    status: trips.status,
-    requestCount: sql<number>`
+  const rides = await db
+    .select({
+      tripId: trips.tripId,
+      startAddress: trips.startAddress,
+      endAddress: trips.endAddress,
+      tripDate: trips.tripDate,
+      departureTime: trips.departureTime,
+      availableSeats: trips.availableSeats,
+      expectedFare: trips.expectedFare,
+      status: trips.status,
+      requestCount: sql<number>`
       COUNT(${bookings.bookingId})
       FILTER (WHERE ${bookings.status} = 'requested')
     `.as("requestCount"),
-  })
-  .from(trips)
-  .leftJoin(bookings, eq(bookings.tripId, trips.tripId))
-  .where(eq(trips.driverId, userId))
-  .groupBy(trips.tripId)
-  .orderBy(asc(trips.tripDate));
-
+    })
+    .from(trips)
+    .leftJoin(bookings, eq(bookings.tripId, trips.tripId))
+    .where(eq(trips.driverId, userId))
+    .groupBy(trips.tripId)
+    .orderBy(asc(trips.tripDate));
 
   res.json({ rides });
 };
@@ -1257,13 +1267,8 @@ export const getRideRequests = async (req, res) => {
     .from(bookings)
     .innerJoin(users, eq(users.userId, bookings.booked_by))
     .where(
-      and(
-        eq(bookings.tripId, Number(tripId)),
-        eq(bookings.status, "requested")
-      )
+      and(eq(bookings.tripId, Number(tripId)), eq(bookings.status, "requested"))
     );
 
   res.json({ requests });
 };
-
-

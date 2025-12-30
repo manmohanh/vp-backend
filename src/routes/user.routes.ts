@@ -18,7 +18,7 @@ router.post("/verify-otp", verifyOTP);
 // Protected routes
 router.get("/profile", auth, getProfile);
 router.put("/profile", auth, completeProfile);
-router.post("/push-token", auth, updatePushToken);
+router.put("/push-token", auth, updatePushToken);
 router.get("/stats", auth, getStats);
 
 export default router;

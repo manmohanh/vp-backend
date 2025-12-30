@@ -147,7 +147,6 @@ export const usersRelations = relations(users, ({ many }) => ({
   couponUsages: many(couponUsage),
 }));
 
-
 // Bookings Table
 export const bookings = pgTable("bookings", {
   bookingId: serial("booking_id").primaryKey(),
@@ -182,7 +181,9 @@ export const bookings = pgTable("bookings", {
   ),
   remarks: varchar("remarks", { length: 1000 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
 
 // Define booking relations
@@ -369,20 +370,32 @@ export const otps = pgTable("otps", {
 });
 
 // Notifications Table
-export const notifications = pgTable("notifications", {
-  notificationId: serial("notification_id").primaryKey(),
-  userId: integer("user_id")
-    .references(() => users.userId)
-    .notNull(),
-  bookingId: integer("booking_id").references(() => bookings.bookingId),
-  tripId: integer("trip_id").references(() => trips.tripId),
-  type: varchar("type", { length: 50 }).notNull(), // 'ride_accepted', 'ride_rejected', 'payment_confirmed', etc.
-  title: varchar("title", { length: 255 }).notNull(),
-  message: varchar("message", { length: 1000 }).notNull(),
-  isRead: boolean("is_read").default(false).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+export const notifications = pgTable(
+  "notifications",
+  {
+    notificationId: serial("notification_id").primaryKey(),
+    sender: integer("sender")
+      .references(() => users.userId)
+      .notNull(),
+    receiver: integer("receiver")
+      .references(() => users.userId)
+      .notNull(),
+    bookingId: integer("booking_id").references(() => bookings.bookingId),
+    tripId: integer("trip_id").references(() => trips.tripId),
+    type: varchar("type", { length: 50 }).notNull(), // 'ride_accepted','ride_requested',  'ride_rejected', 'payment_confirmed', etc.
+    title: varchar("title", { length: 255 }).notNull(),
+    message: varchar("message", { length: 1000 }).notNull(),
+    isRead: boolean("is_read").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => ({
+    userIdx: index("idx_notifications_receiver").on(table.receiver),
+    readIdx: index("idx_notifications_read").on(table.receiver, table.isRead),
+  })
+);
 
 // Define coupon relations
 export const couponsRelations = relations(

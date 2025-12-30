@@ -11,8 +11,8 @@ import {
   getPendingRideRequests,
   acceptRideRequest,
   rejectRideRequest,
-  updateBookingStatus,
   getMyBookedRides,
+  cancelTrip,
 } from "../controllers/booking.controller";
 
 const router = Router();
@@ -44,10 +44,12 @@ router.post("/:bookingId/confirm-payment", auth, confirmPaymentReceived);
 // Complete a trip (driver)
 router.post("/trip/:tripId/complete", auth, completeTrip);
 
+// Cancel a trip (driver)
+router.post("/trip/:tripId/cancel", auth, cancelTrip);
+
 // Cancel a booking (passenger)
 router.post("/:bookingId/cancel", auth, cancelBooking);
 
-router.put("/:bookingId/status", auth, updateBookingStatus);
 router.get("/my-rides", auth, getMyBookedRides);
 
 export default router;

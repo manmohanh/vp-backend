@@ -1,8 +1,8 @@
 import { Response, Request } from "express";
 import { db } from "../db";
-import { bookings, trips, users } from "../db/schema";
+import { bookings, trips, users, notifications } from "../db/schema";
 import { AuthRequest } from "../middleware/auth";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, getTableColumns } from "drizzle-orm";
 import { sendFirebaseNotification } from "../services/firebaseAdmin.service";
 import { reverseGeocode } from "../utils/geoUtils";
 
@@ -16,7 +16,7 @@ export const createBooking = async (
       tripId,
       seatsBooked,
       appliedCoupon,
-      finalAmount = 100,
+      finalAmount,
       pickupLocation,
       dropLocation,
       pickupTime,
@@ -101,24 +101,92 @@ export const createBooking = async (
       return;
     }
 
-    const [newBooking] = await db
-      .insert(bookings)
-      .values({
-        tripId: parsedTripId,
-        booked_by: userId,
-        seatsBooked: parseInt(seatsBooked),
-        pickAddress: shortPickupAddress.shortAddress,
-        dropAddress: shortDropAddress.shortAddress,
-        pickupLocation,
-        dropLocation,
-        pickupTime: parsedPickupTime,
-        dropTime: parsedDropTime,
-        amount: finalAmount,
-        paymentMethod: "cod",
-        paymentStatus: "pending",
-        remarks: appliedCoupon ? `Coupon applied: ${appliedCoupon}` : null,
-      })
-      .returning();
+    const [newBooking, newNotification] = await db.transaction(async (tx) => {
+      const [booking] = await tx
+        .insert(bookings)
+        .values({
+          tripId: parsedTripId,
+          booked_by: userId,
+          seatsBooked: parseInt(seatsBooked),
+          pickAddress: shortPickupAddress.shortAddress,
+          dropAddress: shortDropAddress.shortAddress,
+          pickupLocation,
+          dropLocation,
+          pickupTime: parsedPickupTime,
+          dropTime: parsedDropTime,
+          amount: finalAmount,
+          paymentMethod: "cod",
+          paymentStatus: "pending",
+          remarks: appliedCoupon ? `Coupon applied: ${appliedCoupon}` : null,
+        })
+        .returning();
+
+      // await tx
+      //   .update(trips)
+      //   .set({
+      //     availableSeats: sql`${trips.availableSeats} - ${booking.seatsBooked}`,
+      //   })
+      //   .where(eq(trips.tripId, booking.tripId));
+
+      const [trip] = await tx
+        .select({
+          driverId: trips.driverId,
+          startAddress: trips.startAddress,
+          endAddress: trips.endAddress,
+        })
+        .from(trips)
+        .where(eq(trips.tripId, booking.tripId));
+
+      if (!trip) throw new Error("Trip not found");
+
+      const [notification] = await tx
+        .insert(notifications)
+        .values({
+          receiver: trip.driverId,
+          sender: booking.booked_by,
+          bookingId: booking.bookingId,
+          tripId: booking.tripId,
+          type: "ride_requested",
+          title: "New Ride Request",
+          message: `A passenger requested ${booking.seatsBooked} ${
+            booking.seatsBooked > 1 ? "seats" : "seat"
+          }  from ${booking.pickAddress} to ${booking.dropAddress}`,
+        })
+        .returning();
+
+      const result = await db.query.users.findFirst({
+        where: eq(users.userId, trip.driverId),
+        columns: {
+          expoPushToken: true,
+        },
+      });
+
+      if (result?.expoPushToken) {
+        const pushData = {
+          to: result?.expoPushToken,
+          sound: "default",
+          title: "New Ride Request",
+          body: `A passenger requested ${booking.seatsBooked} ${
+            booking.seatsBooked > 1 ? "seats" : "seat"
+          }  from ${booking.pickAddress} to ${booking.dropAddress}.`,
+          data: {
+            tripId,
+          },
+        };
+
+        await fetch("https://exp.host/--/api/v2/push/send", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Accept-encoding": "gzip, deflate",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(pushData),
+        });
+      }
+
+      return [booking, notification];
+    });
 
     res.status(201).json({
       message: "Booking created successfully",
@@ -138,6 +206,16 @@ export const createBooking = async (
         paymentMethod: newBooking.paymentMethod,
         paymentStatus: newBooking.paymentStatus,
         createdAt: newBooking.createdAt,
+      },
+      notification: {
+        notificationId: newNotification.notificationId,
+        sender: newNotification.sender,
+        receiver: newNotification.receiver,
+        type: newNotification.type,
+        title: newNotification.title,
+        message: newNotification.message,
+        isRead: newNotification.isRead,
+        createdAt: newNotification.createdAt,
       },
     });
   } catch (error) {
@@ -234,7 +312,6 @@ export const getBookingById = async (
                 model: true,
                 licensePlate: true,
                 type: true,
-            
               },
             },
           },
@@ -433,6 +510,8 @@ export const completeTrip = async (
     const { tripId } = req.params;
     const driverId = req.user!.userId;
 
+    console.log(tripId)
+
     // Verify the trip belongs to the driver
     const trip = await db.query.trips.findFirst({
       where: and(
@@ -473,13 +552,13 @@ export const completeTrip = async (
       (booking) => booking.paymentStatus !== "received"
     );
 
-    if (pendingPayments.length > 0) {
-      res.status(400).json({
-        error: `Cannot complete trip. ${pendingPayments.length} payment(s) still pending`,
-        pendingPayments: pendingPayments.length,
-      });
-      return;
-    }
+    // if (pendingPayments.length > 0) {
+    //   res.status(400).json({
+    //     error: `Cannot complete trip. ${pendingPayments.length} payment(s) still pending`,
+    //     pendingPayments: pendingPayments.length,
+    //   });
+    //   return;
+    // }
 
     // Update trip status to completed
     const [completedTrip] = await db
@@ -513,6 +592,146 @@ export const completeTrip = async (
     res.status(500).json({ error: "Error completing trip" });
   }
 };
+
+export const cancelTrip = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const tripId = Number(req.params.tripId);
+    const driverId = req.user!.userId;
+
+    const trip = await db
+      .select({
+        tripId: trips.tripId,
+        status: trips.status,
+        driverId: trips.driverId,
+      })
+      .from(trips)
+      .where(
+        and(
+          eq(trips.tripId, tripId),
+          eq(trips.driverId, driverId)
+        )
+      )
+      .limit(1)
+      .then((rows) => rows[0]);
+
+    if (!trip) {
+      res.status(404).json({
+        error: "Trip not found or you are not authorized",
+      });
+      return;
+    }
+
+    if (trip.status === "completed") {
+      res.status(400).json({
+        error: "Completed trip cannot be cancelled",
+      });
+      return;
+    }
+
+    if (trip.status === "cancelled") {
+      res.status(400).json({
+        error: "Trip already cancelled",
+      });
+      return;
+    }
+
+    const tripBookings = await db
+      .select({
+        bookingId: bookings.bookingId,
+        bookedBy: bookings.booked_by,
+        pickAddress: bookings.pickAddress,
+        dropAddress: bookings.dropAddress,
+      })
+      .from(bookings)
+      .where(eq(bookings.tripId, tripId));
+
+    await db.transaction(async (tx) => {
+      // Cancel trip
+      await tx
+        .update(trips)
+        .set({
+          status: "cancelled",
+          updatedAt: new Date(),
+        })
+        .where(eq(trips.tripId, tripId));
+
+      // Cancel all bookings
+      await tx
+        .update(bookings)
+        .set({
+          status: "cancelled",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.tripId, tripId));
+    });
+
+
+    try {
+      for (const booking of tripBookings) {
+        const bookedUser = await db
+          .select()
+          .from(users)
+          .where(eq(users.userId, booking.bookedBy))
+          .limit(1)
+          .then((rows) => rows[0]);
+
+        if (!bookedUser) continue;
+
+  
+        await db.insert(notifications).values({
+          receiver: booking.bookedBy,
+          sender: driverId,
+          bookingId: booking.bookingId,
+          tripId,
+          type: "trip_cancelled",
+          title: "Trip Cancelled",
+          message: `Your trip from ${booking.pickAddress} to ${booking.dropAddress} has been cancelled by the driver.`,
+        });
+
+    
+        if (bookedUser.expoPushToken) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Accept-Encoding": "gzip, deflate",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              to: bookedUser.expoPushToken,
+              sound: "default",
+              title: "Trip Cancelled ❌",
+              body: `Your trip from ${booking.pickAddress} to ${booking.dropAddress} has been cancelled.`,
+              data: {
+                type: "trip_cancelled",
+                tripId: String(tripId),
+                bookingId: String(booking.bookingId),
+              },
+            }),
+          });
+        }
+      }
+    } catch (notificationError) {
+      console.error("❌ Notification error:", notificationError);
+
+    }
+
+    res.status(200).json({
+      message: "Trip cancelled successfully",
+      trip: {
+        tripId,
+        status: "cancelled",
+      },
+    });
+  } catch (error) {
+    console.error("❌ Cancel trip error:", error);
+    res.status(500).json({ error: "Error cancelling trip" });
+  }
+};
+
 
 // Get pending ride requests for driver
 export const getPendingRideRequests = async (
@@ -587,96 +806,124 @@ export const getPendingRideRequests = async (
   }
 };
 
-// Accept ride request (driver action)
+
+
 export const acceptRideRequest = async (
   req: AuthRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const { bookingId } = req.params;
+    const bookingId = Number(req.params.bookingId);
     const driverId = req.user!.userId;
 
-    // Get booking with trip details
-    const booking = await db.query.bookings.findFirst({
-      where: eq(bookings.bookingId, parseInt(bookingId)),
-      with: { trip: true },
-    });
+    const booking = await db
+      .select({
+        bookingId: bookings.bookingId,
+        status: bookings.status,
+        seatsBooked: bookings.seatsBooked,
+        bookedBy: bookings.booked_by,
+        pickAddress: bookings.pickAddress,
+        dropAddress: bookings.dropAddress,
+        tripId: bookings.tripId,
+        tripDriverId: trips.driverId,
+        availableSeats: trips.availableSeats,
+      })
+      .from(bookings)
+      .innerJoin(trips, eq(bookings.tripId, trips.tripId))
+      .where(eq(bookings.bookingId, bookingId))
+      .limit(1)
+      .then((rows) => rows[0]);
 
     if (!booking) {
       res.status(404).json({ error: "Booking not found" });
       return;
     }
 
-    // Verify driver owns this trip
-    if (!booking.trip || (booking.trip as any).driverId !== driverId) {
+    if (booking.tripDriverId !== driverId) {
       res.status(403).json({ error: "Unauthorized" });
       return;
     }
 
-    // Check if already processed
     if (booking.status !== "requested") {
-      res.status(400).json({ error: `Booking already ${booking.status}` });
-      return;
-    }
-
-    // Check if enough seats are still available
-    const currentTrip = booking.trip as any;
-    if (currentTrip.seats < (booking.seatsBooked || 0)) {
       res.status(400).json({
-        error: `Not enough seats available. Only ${currentTrip.seats} seat(s) remaining.`,
+        error: `Booking already ${booking.status}`,
       });
       return;
     }
 
-    // Update booking status to confirmed AND decrease available seats
-    const [updatedBooking] = await db
-      .update(bookings)
-      .set({
-        status: "confirmed",
-        updatedAt: new Date(),
-      })
-      .where(eq(bookings.bookingId, parseInt(bookingId)))
-      .returning();
+    const seatsNeeded = booking.seatsBooked ?? 0;
 
-    // Decrease available seats in the trip
-    await db
-      .update(trips)
-      .set({
-        availableSeats: currentTrip.seats - (booking.seatsBooked || 0),
-        updatedAt: new Date(),
-      })
-      .where(eq(trips.tripId, booking.tripId!));
+    if (booking.availableSeats < seatsNeeded) {
+      res.status(400).json({
+        error: `Not enough seats available. Only ${booking.availableSeats} seat(s) left.`,
+      });
+      return;
+    }
 
-    // Send Firebase push notification to passenger
+    let updatedBooking;
+
+    await db.transaction(async (tx) => {
+      [updatedBooking] = await tx
+        .update(bookings)
+        .set({
+          status: "accepted",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.bookingId, bookingId))
+        .returning();
+
+      await tx
+        .update(trips)
+        .set({
+          availableSeats: booking.availableSeats - seatsNeeded,
+          updatedAt: new Date(),
+        })
+        .where(eq(trips.tripId, booking.tripId));
+    });
+
     try {
-      const [rider] = await db
+      const rider = await db
         .select()
         .from(users)
-        .where(eq(users.userId, booking.tripId!));
+        .where(eq(users.userId, booking.bookedBy))
+        .limit(1)
+        .then((rows) => rows[0]);
 
-      if (rider?.expoPushToken) {
-        const result = await sendFirebaseNotification({
-          token: rider.expoPushToken,
-          title: "Ride Request Accepted! 🎉",
-          body: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} has been accepted by the driver.`,
-          data: {
-            type: "ride_accepted",
-            bookingId: String(booking.bookingId),
-            tripId: String(booking.tripId),
-          },
-          sound: "default",
-          priority: "high",
+      if (rider) {
+        await db.insert(notifications).values({
+          receiver: booking.bookedBy,
+          sender: driverId,
+          bookingId: booking.bookingId,
+          tripId: booking.tripId,
+          type: "ride_accepted",
+          title: "Ride Request Accepted",
+          message: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} has been accepted.`,
         });
 
-        if (result.success) {
-          console.log("✅ Notification sent to passenger");
-        } else {
-          console.error("⚠️ Failed to send notification:", result.error);
+        if (rider.expoPushToken) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Accept-Encoding": "gzip, deflate",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              to: rider.expoPushToken,
+              sound: "default",
+              title: "Ride Accepted 🚗",
+              body: `Your ride from ${booking.pickAddress} to ${booking.dropAddress} is confirmed.`,
+              data: {
+                type: "ride_accepted",
+                bookingId: String(booking.bookingId),
+                tripId: String(booking.tripId),
+              },
+            }),
+          });
         }
       }
-    } catch (notifError) {
-      console.error("❌ Error sending Firebase notification:", notifError);
-      // Don't fail the request if notification fails
+    } catch (notificationError) {
+      console.error("❌ Notification error:", notificationError);
     }
 
     res.status(200).json({
@@ -684,15 +931,16 @@ export const acceptRideRequest = async (
       booking: {
         bookingId: updatedBooking.bookingId,
         status: updatedBooking.status,
-        seatsConfirmed: booking.seatsBooked,
+        seatsConfirmed: seatsNeeded,
         updatedAt: updatedBooking.updatedAt,
       },
     });
   } catch (error) {
-    console.error("Accept ride request error:", error);
+    console.error("❌ Accept ride request error:", error);
     res.status(500).json({ error: "Error accepting ride request" });
   }
 };
+
 
 // Reject ride request (driver action)
 export const rejectRideRequest = async (
@@ -700,74 +948,101 @@ export const rejectRideRequest = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { bookingId } = req.params;
+    const bookingId = Number(req.params.bookingId);
     const driverId = req.user!.userId;
 
-    // Get booking with trip details
-    const booking = await db.query.bookings.findFirst({
-      where: eq(bookings.bookingId, parseInt(bookingId)),
-      with: { trip: true },
-    });
+    const booking = await db
+      .select({
+        bookingId: bookings.bookingId,
+        status: bookings.status,
+        bookedBy: bookings.booked_by,
+        pickAddress: bookings.pickAddress,
+        dropAddress: bookings.dropAddress,
+        tripId: bookings.tripId,
+        tripDriverId: trips.driverId,
+      })
+      .from(bookings)
+      .innerJoin(trips, eq(bookings.tripId, trips.tripId))
+      .where(eq(bookings.bookingId, bookingId))
+      .limit(1)
+      .then((rows) => rows[0]);
 
     if (!booking) {
       res.status(404).json({ error: "Booking not found" });
       return;
     }
 
-    // Verify driver owns this trip
-    if (!booking.trip || (booking.trip as any).driverId !== driverId) {
+    if (booking.tripDriverId !== driverId) {
       res.status(403).json({ error: "Unauthorized" });
       return;
     }
 
-    // Check if already processed
     if (booking.status !== "requested") {
-      res.status(400).json({ error: `Booking already ${booking.status}` });
+      res.status(400).json({
+        error: `Booking already ${booking.status}`,
+      });
       return;
     }
 
-    // Update booking status to rejected
-    const [updatedBooking] = await db
-      .update(bookings)
-      .set({
-        status: "rejected",
-        updatedAt: new Date(),
-      })
-      .where(eq(bookings.bookingId, parseInt(bookingId)))
-      .returning();
+    let updatedBooking;
 
-    // NOTE: No need to return seats since they were never decreased when booking was created
+    await db.transaction(async (tx) => {
+      [updatedBooking] = await tx
+        .update(bookings)
+        .set({
+          status: "rejected",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.bookingId, bookingId))
+        .returning();
+    });
 
-    // Send Firebase push notification to passenger
     try {
-      const [rider] = await db
+      const bookedUser = await db
         .select()
         .from(users)
-        .where(eq(users.userId, booking.tripId!));
+        .where(eq(users.userId, booking.bookedBy))
+        .limit(1)
+        .then((rows) => rows[0]);
 
-      if (rider?.expoPushToken) {
-        const result = await sendFirebaseNotification({
-          token: rider.expoPushToken,
-          title: "Ride Request Declined",
-          body: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} was declined by the driver. Please search for another ride.`,
-          data: {
-            type: "ride_rejected",
-            bookingId: String(booking.bookingId),
-            tripId: String(booking.tripId),
-          },
-          sound: "default",
-          priority: "high",
+      if (bookedUser) {
+    
+        await db.insert(notifications).values({
+          receiver: booking.bookedBy,
+          sender: driverId,
+          bookingId: booking.bookingId,
+          tripId: booking.tripId,
+          type: "ride_rejected",
+          title: "Ride Request Rejected",
+          message: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} was declined by the driver.`,
         });
 
-        if (result.success) {
-          console.log("✅ Notification sent to passenger");
-        } else {
-          console.error("⚠️ Failed to send notification:", result.error);
+
+        if (bookedUser.expoPushToken) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Accept-Encoding": "gzip, deflate",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              to: bookedUser.expoPushToken,
+              sound: "default",
+              title: "Ride Request Declined ❌",
+              body: `Your ride from ${booking.pickAddress} to ${booking.dropAddress} was declined. Please try another ride.`,
+              data: {
+                type: "ride_rejected",
+                bookingId: String(booking.bookingId),
+                tripId: String(booking.tripId),
+              },
+            }),
+          });
         }
       }
     } catch (notifError) {
-      console.error("❌ Error sending Firebase notification:", notifError);
-      // Don't fail the request if notification fails
+      console.error("❌ Notification error:", notifError);
+   
     }
 
     res.status(200).json({
@@ -779,7 +1054,7 @@ export const rejectRideRequest = async (
       },
     });
   } catch (error) {
-    console.error("Reject ride request error:", error);
+    console.error("❌ Reject ride request error:", error);
     res.status(500).json({ error: "Error rejecting ride request" });
   }
 };
@@ -790,136 +1065,133 @@ export const cancelBooking = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { bookingId } = req.params;
+    const bookingId = Number(req.params.bookingId);
     const userId = req.user!.userId;
 
-    console.log(`\n🚫 BOOKING CANCELLATION REQUEST`);
-    console.log(`   Booking ID: ${bookingId}`);
-    console.log(`   Requested by User ID: ${userId} (passenger)`);
-
-    // Get booking details
-    const booking = await db.query.bookings.findFirst({
-      where: and(
-        eq(bookings.bookingId, parseInt(bookingId)),
-        eq(bookings.tripId, userId)
-      ),
-      with: {
-        trip: true,
-      },
-    });
+    const booking = await db
+      .select({
+        bookingId: bookings.bookingId,
+        status: bookings.status,
+        seatsBooked: bookings.seatsBooked,
+        bookedBy: bookings.booked_by,
+        tripId: bookings.tripId,
+        pickAddress: bookings.pickAddress,
+        dropAddress: bookings.dropAddress,
+        tripDriverId: trips.driverId,
+        availableSeats: trips.availableSeats,
+      })
+      .from(bookings)
+      .innerJoin(trips, eq(bookings.tripId, trips.tripId))
+      .where(
+        and(
+          eq(bookings.bookingId, bookingId),
+          eq(bookings.booked_by, userId)
+        )
+      )
+      .limit(1)
+      .then((rows) => rows[0]);
 
     if (!booking) {
-      console.log(
-        `   ❌ Booking not found or user ${userId} is not authorized`
-      );
       res.status(404).json({
         error: "Booking not found or you are not authorized",
       });
       return;
     }
 
-    console.log(`   Current booking status: ${booking.status}`);
-    console.log(`   Trip ID: ${booking.tripId}`);
-    console.log(`   Seats booked: ${booking.seatsBooked}`);
-
-    // Check if booking can be cancelled
     if (booking.status === "completed") {
-      console.log(`   ❌ Cannot cancel - booking is already completed`);
       res.status(400).json({
         error: "Cannot cancel a completed booking",
       });
       return;
     }
 
-    if (booking.status === "cancelled") {
-      console.log(`   ❌ Booking is already cancelled`);
+    if (booking.status.startsWith("cancelled")) {
       res.status(400).json({
         error: "Booking is already cancelled",
       });
       return;
     }
 
-    // Update booking status to cancelled_by_passenger
-    const [cancelledBooking] = await db
-      .update(bookings)
-      .set({
-        status: "cancelled_by_passenger",
-        updatedAt: new Date(),
-      })
-      .where(eq(bookings.bookingId, parseInt(bookingId)))
-      .returning();
+    const seatsToReturn = booking.seatsBooked ?? 0;
 
-    console.log(`   ✅ Booking status updated to: ${cancelledBooking.status}`);
+    let cancelledBooking;
 
-    // Return seats to the trip
-    if (booking.trip) {
-      const currentSeats = (booking.trip as any).seats;
-      const seatsToReturn = booking.seatsBooked || 0;
-      const newSeats = currentSeats + seatsToReturn;
-
-      console.log(
-        `   🔄 Returning ${seatsToReturn} seat(s) to trip ${booking.tripId}`
-      );
-      console.log(`   Current seats: ${currentSeats} → New seats: ${newSeats}`);
-
-      await db
-        .update(trips)
+    await db.transaction(async (tx) => {
+      [cancelledBooking] = await tx
+        .update(bookings)
         .set({
-          availableSeats: newSeats,
+          status: "cancelled",
           updatedAt: new Date(),
         })
-        .where(eq(trips.tripId, booking.tripId!));
+        .where(eq(bookings.bookingId, bookingId))
+        .returning();
 
-      console.log(`   ✅ Seats returned successfully`);
-    }
+      await tx
+        .update(trips)
+        .set({
+          availableSeats: booking.availableSeats + seatsToReturn,
+          updatedAt: new Date(),
+        })
+        .where(eq(trips.tripId, booking.tripId));
+    });
 
-    // Send Firebase push notification to driver about cancellation
+
     try {
-      if (booking.trip) {
-        const driverId = (booking.trip as any).driverId;
-        const [driver] = await db
-          .select()
-          .from(users)
-          .where(eq(users.userId, driverId));
+      const driver = await db
+        .select()
+        .from(users)
+        .where(eq(users.userId, trips.driverId))
+        .limit(1)
+        .then((rows) => rows[0]);
 
-        if (driver?.expoPushToken) {
-          const [passenger] = await db
-            .select()
-            .from(users)
-            .where(eq(users.userId, userId));
+      const passenger = await db
+        .select()
+        .from(users)
+        .where(eq(users.userId, userId))
+        .limit(1)
+        .then((rows) => rows[0]);
 
-          const passengerName = passenger
-            ? `${passenger.firstname || ""} ${
-                passenger.lastname || ""
-              }`.trim() || passenger.mobile
-            : "A passenger";
+      const passengerName =
+        passenger?.firstname || passenger?.mobile || "A passenger";
 
-          const result = await sendFirebaseNotification({
-            token: driver.expoPushToken,
-            title: "🚫 Booking Cancelled",
-            body: `${passengerName} has cancelled their booking for ${booking.seatsBooked} seat(s). The seats have been made available again.`,
-            data: {
-              type: "booking_cancelled_by_passenger",
-              bookingId: String(booking.bookingId),
-              tripId: String(booking.tripId),
-              riderId: String(userId),
+      if (driver) {
+    
+        await db.insert(notifications).values({
+          receiver: driver.userId,
+          sender: userId,
+          bookingId: booking.bookingId,
+          tripId: booking.tripId,
+          type: "booking_cancelled_by_passenger",
+          title: "Booking Cancelled",
+          message: `${passengerName} cancelled their booking (${seatsToReturn} seat(s)). Seats are now available again.`,
+        });
+
+ 
+        if (driver.expoPushToken) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Accept-Encoding": "gzip, deflate",
+              "Content-Type": "application/json",
             },
-            sound: "default",
-            priority: "high",
+            body: JSON.stringify({
+              to: driver.expoPushToken,
+              sound: "default",
+              title: "Booking Cancelled 🚫",
+              body: `${passengerName} cancelled their booking. ${seatsToReturn} seat(s) are now available.`,
+              data: {
+                type: "booking_cancelled_by_passenger",
+                bookingId: String(booking.bookingId),
+                tripId: String(booking.tripId),
+                riderId: String(userId),
+              },
+            }),
           });
-
-          if (result.success) {
-            console.log("✅ Cancellation notification sent to driver");
-          } else {
-            console.error("⚠️ Failed to send notification:", result.error);
-          }
-        } else {
-          console.log("⚠️ Driver has no push token registered");
         }
       }
     } catch (notifError) {
-      console.error("❌ Error sending Firebase notification:", notifError);
-      // Don't fail the request if notification fails
+      console.error("❌ Notification error:", notifError);
     }
 
     res.status(200).json({
@@ -936,121 +1208,40 @@ export const cancelBooking = async (
   }
 };
 
-export const updateBookingStatus = async (req: Request, res: Response) => {
-  const bookingId = Number(req.params.bookingId);
-  const { status } = req.body; // accepted | rejected | cancelled
-
-  if (!["accepted", "rejected", "cancelled"].includes(status)) {
-    return res.status(400).json({ message: "Invalid status" });
-  }
-
-  try {
-    await db.transaction(async (tx) => {
-      /* 1️⃣ Lock booking row */
-      const [booking] = await tx.execute(sql`
-        SELECT * FROM bookings
-        WHERE booking_id = ${bookingId}
-        FOR UPDATE
-      `)
-
-      console.log(booking)
-
-      if (!booking) {
-        throw new Error("Booking not found");
-      }
-
-      /* 2️⃣ Lock trip row */
-      const [trip] = await tx.execute(sql`
-        SELECT * FROM trips
-        WHERE trip_id = ${booking.trip_id}
-        FOR UPDATE
-      `);
-
-      if (!trip) {
-        throw new Error("Trip not found");
-      }
-
-      /* 3️⃣ Handle seat logic */
-      const wasAccepted = booking.status === "accepted";
-      const isAccepting = status === "accepted";
-
-      // Accepting booking
-      if (!wasAccepted && isAccepting) {
-        if (trip.available_seats < booking.seats_booked) {
-          throw new Error("Not enough seats available");
-        }
-
-        await tx
-          .update(trips)
-          .set({
-            availableSeats: sql`${trips.availableSeats} - ${booking.seats_booked}`,
-          })
-          .where(eq(trips.tripId, Number(booking.trip_id)));
-      }
-
-      // Reverting accepted booking
-      if (wasAccepted && status !== "accepted") {
-        await tx
-          .update(trips)
-          .set({
-            availableSeats: sql`${trips.availableSeats} + ${booking.seats_booked}`,
-          })
-          .where(eq(trips.tripId, Number(booking.trip_id)));
-      }
-
-      /* 4️⃣ Update booking status */
-      await tx
-        .update(bookings)
-        .set({
-          status,
-          updatedAt: new Date(),
-        })
-        .where(eq(bookings.bookingId, bookingId));
-    });
-
-    res.json({ success: true });
-  } catch (error: any) {
-    console.error("updateBookingStatus error:", error);
-    res.status(400).json({
-      success: false,
-      message: error.message || "Something went wrong",
-    });
-  }
-};
-
 
 export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user.userId;
 
-
-
-    if(!userId){
+    if (!userId) {
       return res.status(404).json({
-        message:"User not found"
-      })
+        message: "User not found",
+      });
     }
 
     const data = await db
       .select({
+        ...getTableColumns(bookings),
+
+        totalDistance: sql<number>`ROUND(ST_Distance(${bookings.pickupLocation}::geography, ${bookings.dropLocation}::geography)::numeric, 2)`,
         bookingId: bookings.bookingId,
         status: bookings.status,
         seatsBooked: bookings.seatsBooked,
         amount: bookings.amount,
         pickAddress: bookings.pickAddress,
         dropAddress: bookings.dropAddress,
+        pickLocation: bookings.pickupLocation,
+        dropLocation: bookings.dropLocation,
         pickupTime: bookings.pickupTime,
         dropTime: bookings.dropTime,
-        tripDate:trips.tripDate,
+        tripDate: trips.tripDate,
         departureTime: trips.departureTime,
         arrivalTime: trips.arrivalTime,
       })
       .from(bookings)
-      .innerJoin(trips,eq(bookings.tripId,trips.tripId))
+      .innerJoin(trips, eq(bookings.tripId, trips.tripId))
       .where(eq(bookings.booked_by, userId))
       .orderBy(desc(bookings.createdAt));
-
-      console.log(data)
 
     res.json(data);
   } catch (error) {

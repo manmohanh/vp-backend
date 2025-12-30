@@ -255,8 +255,132 @@ export const getAllDocuments = async (
   }
 };
 
+export const addDLDocument = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { dlNumber, dlUrl } = req.body;
+
+    if (!dlNumber || typeof dlNumber !== "string") {
+      res.status(400).json({
+        error: "Driver license number is required",
+      });
+      return;
+    }
+
+    if (!dlUrl || typeof dlUrl !== "string") {
+      res.status(400).json({
+        error: "Driver license document URL is required",
+      });
+      return;
+    }
+
+    const existingDL = await db
+      .select()
+      .from(documents)
+      .where(
+        and(
+          eq(documents.userId, userId),
+          eq(documents.type, "dl"),
+          eq(documents.active, true)
+        )
+      )
+      .limit(1)
+      .then((rows) => rows[0]);
+
+    if (existingDL) {
+      res.status(409).json({
+        error: "An active driver license already exists",
+      });
+      return;
+    }
+
+    const [newDocument] = await db
+      .insert(documents)
+      .values({
+        userId,
+        documentNumber: dlNumber.trim(),
+        type: "dl",
+        url: dlUrl.trim(),
+        active: true,
+        status: "pending",
+        remarks: "Driver License",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    res.status(201).json({
+      message: "Driver license submitted successfully",
+      document: {
+        id: newDocument.documentId,
+        status: newDocument.status,
+        active: newDocument.active,
+        createdAt: newDocument.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("Add DL document error:", error);
+    res.status(500).json({
+      error: "Failed to submit driver license document",
+    });
+  }
+};
+
+export const getDLDocument = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+
+    const dlDocument = await db
+      .select({
+        id: documents.documentId,
+        documentNumber: documents.documentNumber,
+        url: documents.url,
+        status: documents.status,
+        remarks: documents.remarks,
+        active: documents.active,
+        createdAt: documents.createdAt,
+        updatedAt: documents.updatedAt,
+      })
+      .from(documents)
+      .where(
+        and(
+          eq(documents.userId, userId),
+          eq(documents.type, "dl"),
+          eq(documents.active, true)
+        )
+      )
+      .limit(1)
+      .then((rows) => rows[0]);
+
+    if (!dlDocument) {
+      res.status(404).json({
+        error: "Driver license not found",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Driver license fetched successfully",
+      document: dlDocument,
+    });
+  } catch (error) {
+    console.error("Get DL document error:", error);
+    res.status(500).json({
+      error: "Failed to fetch driver license document",
+    });
+  }
+};
+
 export default {
   verifyDocument,
   getPendingDocuments,
   getAllDocuments,
+  addDLDocument,
+  getDLDocument
 };

@@ -147,8 +147,6 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
         userId: user.userId,
         mobile: user.mobile,
         usertype: user.usertype,
-  
-
       },
       config.jwt.secret!,
       { expiresIn: config.jwt.expiresIn }
@@ -168,8 +166,13 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
         userId: user.userId,
         firstname: user.firstname,
         lastname: user.lastname,
+        email: user.email,
         mobile: user.mobile,
         usertype: user.usertype,
+        gender: user.gender,
+        pincode: user.pincode,
+        dob: user.dob,
+        expoPushToken: user.expoPushToken,
         isVerified: user.isVerified,
       },
       token,
@@ -183,7 +186,7 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
 
 export const completeProfile = async (req: AuthRequest, res: Response) => {
   try {
-    const { firstname, lastname,email, gender, dob } = req.body;
+    const { firstname, lastname, email, gender, dob } = req.body;
 
     console.log(req.body);
 
@@ -211,6 +214,7 @@ export const completeProfile = async (req: AuthRequest, res: Response) => {
         gender: updatedUser.gender,
         pincode: updatedUser.pincode,
         dob: updatedUser.dob,
+        expoPushToken: updatedUser.expoPushToken,
         isVerified: updatedUser.isVerified,
       },
     });
@@ -296,21 +300,26 @@ export const updatePushToken = async (req: AuthRequest, res: Response) => {
   try {
     const { expoPushToken } = req.body;
 
-    if (!expoPushToken) {
-      res.status(400).json({ error: "Push token is required" });
-      return;
+    // Allow null (logout / disable notifications)
+    if (
+      expoPushToken !== null &&
+      typeof expoPushToken !== "string"
+    ) {
+      return res.status(400).json({
+        error: "expoPushToken must be a string or null",
+      });
     }
 
     const [updatedUser] = await db
       .update(users)
       .set({
-        expoPushToken,
+        expoPushToken, // can be string OR null
         updatedAt: new Date(),
       })
       .where(eq(users.userId, req.user!.userId))
       .returning();
 
-    res.json({
+    res.status(200).json({
       message: "Push token updated successfully",
       userId: updatedUser.userId,
     });
@@ -319,6 +328,7 @@ export const updatePushToken = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: "Error updating push token" });
   }
 };
+
 
 export const getStats = async (req: AuthRequest, res: Response) => {
   try {

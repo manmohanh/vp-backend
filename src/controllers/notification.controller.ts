@@ -2,7 +2,7 @@ import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { db } from "../db/index";
 import { notifications } from "../db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, or } from "drizzle-orm";
 
 // Get all notifications for a user
 export const getUserNotifications = async (req: AuthRequest, res: Response) => {
@@ -16,7 +16,8 @@ export const getUserNotifications = async (req: AuthRequest, res: Response) => {
     const userNotifications = await db
       .select()
       .from(notifications)
-      .where(eq(notifications.userId, userId))
+      .where(
+        eq(notifications.receiver, userId))
       .orderBy(desc(notifications.createdAt));
 
     return res.status(200).json({
@@ -48,7 +49,7 @@ export const getUnreadNotificationsCount = async (
       .select()
       .from(notifications)
       .where(
-        and(eq(notifications.userId, userId), eq(notifications.isRead, false))
+        and(eq(notifications.receiver, userId), eq(notifications.isRead, false))
       );
 
     return res.status(200).json({
@@ -87,7 +88,7 @@ export const markNotificationAsRead = async (
       return res.status(404).json({ message: "Notification not found" });
     }
 
-    if (notification.userId !== userId) {
+    if (notification.receiver !== userId) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
@@ -127,7 +128,7 @@ export const markAllNotificationsAsRead = async (
       .update(notifications)
       .set({ isRead: true, updatedAt: new Date() })
       .where(
-        and(eq(notifications.userId, userId), eq(notifications.isRead, false))
+        and(eq(notifications.receiver, userId), eq(notifications.isRead, false))
       );
 
     return res.status(200).json({
@@ -144,7 +145,8 @@ export const markAllNotificationsAsRead = async (
 
 // Helper function to create a notification
 export const createNotification = async (
-  userId: number,
+  receiver: number,
+  sender: number,
   type: string,
   title: string,
   message: string,
@@ -155,7 +157,8 @@ export const createNotification = async (
     const [notification] = await db
       .insert(notifications)
       .values({
-        userId,
+        receiver,
+        sender,
         bookingId,
         tripId,
         type,
