@@ -19,13 +19,13 @@ export const createBooking = async (
       finalAmount,
       pickupLocation,
       dropLocation,
-      pickupTime,
-      dropTime,
     } = req.body;
 
     const userId = req.user!.userId;
 
     const parsedTripId = parseInt(tripId);
+
+    console.log(seatsBooked)
 
     const shortPickupAddress = await reverseGeocode(
       pickupLocation.y,
@@ -57,17 +57,6 @@ export const createBooking = async (
       res.status(400).json({
         error: "Pickup and drop locations are required",
       });
-      return;
-    }
-
-    const parsedPickupTime = pickupTime ? new Date(pickupTime) : null;
-    const parsedDropTime = dropTime ? new Date(dropTime) : null;
-
-    if (
-      (parsedPickupTime && isNaN(parsedPickupTime.getTime())) ||
-      (parsedDropTime && isNaN(parsedDropTime.getTime()))
-    ) {
-      res.status(400).json({ error: "Invalid pickup or drop time" });
       return;
     }
 
@@ -112,8 +101,6 @@ export const createBooking = async (
           dropAddress: shortDropAddress.shortAddress,
           pickupLocation,
           dropLocation,
-          pickupTime: parsedPickupTime,
-          dropTime: parsedDropTime,
           amount: finalAmount,
           paymentMethod: "cod",
           paymentStatus: "pending",

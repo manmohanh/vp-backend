@@ -38,13 +38,11 @@ export const createTrip = async (
       startLocation,
       endLocation,
       departureTime,
-      arrivalTime,
       seats,
-      trip_date,
-      distanceFlexibility,
-      timeFlexibility,
-      expectedFare,
+      tripDate,
+      expectedEarning,
       remarks,
+      totalDistance,
     } = req.body;
 
     // Validate required fields
@@ -91,25 +89,10 @@ export const createTrip = async (
       );
     }
 
-    // Validate flexibility values
-    if (distanceFlexibility && distanceFlexibility < 0) {
-      throw new Error("Distance flexibility cannot be negative");
-    }
-
-    if (timeFlexibility && timeFlexibility < 0) {
-      throw new Error("Time flexibility cannot be negative");
-    }
-
     // Validate fare if provided
-    if (expectedFare && expectedFare < 0) {
+    if (expectedEarning && expectedEarning < 0) {
       throw new Error("Expected fare cannot be negative");
     }
-
-    const shortStartAdd = (
-      await reverseGeocode(startLocation.y, startLocation.x)
-    ).shortAddress;
-    const shortEndAdd = (await reverseGeocode(endLocation.y, endLocation.x))
-      .shortAddress;
 
     // Create new trip
     const tripInsertData: typeof trips.$inferInsert = {
@@ -117,18 +100,16 @@ export const createTrip = async (
       driverId: req.user!.userId,
       startLocation,
       endLocation,
-      startAddress: shortStartAdd,
-      endAddress: shortEndAdd,
-      tripDate: trip_date ? new Date(trip_date) : undefined,
+      startAddress,
+      endAddress,
+      tripDate: tripDate ? new Date(tripDate) : undefined,
       departureTime: departureTime ? new Date(departureTime) : undefined,
-      arrivalTime: arrivalTime ? new Date(arrivalTime) : undefined,
       availableSeats: seats,
-      distanceFlexibility: distanceFlexibility || 0,
-      timeFlexibility: timeFlexibility || 0,
-      expectedFare,
+      expectedFare: expectedEarning,
       active: true,
       status: "scheduled",
       remarks,
+      totalDistance,
     };
 
     console.log("Trip insert data:", JSON.stringify(tripInsertData, null, 2));
@@ -888,7 +869,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         endDistance: sql<number>`ROUND(ST_Distance(${trips.endLocation}::geography, ${passengerEnd}::geography)::numeric, 2)`,
         startToPassengerDrop: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${passengerEnd}::geography)::numeric, 2)`,
         driverTripDistance: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${trips.endLocation}::geography)::numeric, 2)`,
-        totalDistance: sql<number>`ROUND((ST_Distance(${trips.startLocation}::geography, ${passengerStart}::geography) + ST_Distance(${trips.endLocation}::geography, ${passengerEnd}::geography))::numeric, 2)`,
+        totalDistance: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${trips.endLocation}::geography)::numeric, 2)`,
 
         driver: {
           userId: users.userId,
@@ -899,6 +880,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         vehicle: {
           vehicleId: vehicles.vehicleId,
           model: vehicles.model,
+          type:vehicles.type
         },
       })
       .from(trips)
@@ -906,11 +888,10 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
       .innerJoin(vehicles, eq(trips.vehicleId, vehicles.vehicleId))
       .where(
         and(
-          // Passenger's pickup must be within driver's flexibility from driver's start
           sql`ST_Distance(
             ${trips.startLocation}::geography, 
             ${passengerStart}::geography
-          ) <= (${trips.distanceFlexibility} * 1000)`,
+          ) <= (${trips.totalDistance} /2 * 1000)`,
 
           // Passenger's drop location must not be beyond driver's end location
           sql`ST_Distance(
@@ -931,7 +912,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           ne(trips.driverId, req.user?.userId),
 
           // Trip date must be current or future
-          sql`${trips.tripDate} >= ${currentDate.toISOString().split("T")[0]}`,
+          sql`${trips.tripDate} >= ${currentDate.toISOString().split("T")[0]}`
         )
       )
       .orderBy(
@@ -954,12 +935,9 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         startAddress: trip.startAddress,
         endAddress: trip.endAddress,
         departureTime: trip.departureTime,
-        arrivalTime: trip.arrivalTime,
         tripDate: trip.tripDate,
         availableSeats: trip.availableSeats,
         totalSeats: trip.availableSeats,
-        distanceFlexibility: trip.distanceFlexibility,
-        timeFlexibility: trip.timeFlexibility,
         expectedFare: trip.expectedFare,
         status: trip.status,
         remarks: trip.remarks,
@@ -986,6 +964,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         vehicle: {
           id: trip.vehicle.vehicleId,
           model: trip.vehicle.model,
+          type:trip.vehicle.type
         },
       })),
     });
@@ -1178,7 +1157,7 @@ export const getTripDetails = async (
               model: true,
               licensePlate: true,
               type: true,
-              capacity:true
+              capacity: true,
             },
           },
           driver: {

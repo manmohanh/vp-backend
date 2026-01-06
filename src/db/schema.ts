@@ -100,6 +100,7 @@ export const trips = pgTable(
     arrivalTime: timestamp("arrival_time", { withTimezone: true }),
     availableSeats: smallint("available_seats").default(1),
     tripDate: timestamp("trip_date", { withTimezone: true }),
+    totalDistance: integer("total_distance").default(0),
     distanceFlexibility: smallint("distance_flexibility").default(0), // in kilometers
     timeFlexibility: smallint("time_flexibility").default(0), // in minutes
     expectedFare: integer("expected_fare"), // in paise (1 rupee = 100 paise)
