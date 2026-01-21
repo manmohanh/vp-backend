@@ -16,19 +16,10 @@ import {
   gt,
   ne,
 } from "drizzle-orm";
-import {
-  calculateHaversineDistance,
-  isRouteMatch,
-  extractCoordinates,
-  normalizeCoordinates,
-  formatLocationWithCoords,
-  reverseGeocode,
-} from "../utils/geoUtils";
-import googleMapsService from "../services/googleMaps.service";
 
 export const createTrip = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const {
@@ -48,7 +39,7 @@ export const createTrip = async (
     // Validate required fields
     if (!vehicleId || !startLocation || !endLocation || !seats) {
       throw new Error(
-        "Vehicle ID, start location, end location, and seats are required"
+        "Vehicle ID, start location, end location, and seats are required",
       );
     }
 
@@ -62,7 +53,7 @@ export const createTrip = async (
     const vehicle = await db.query.vehicles.findFirst({
       where: and(
         eq(vehicles.vehicleId, vehicleIdInt),
-        eq(vehicles.userId, req.user!.userId)
+        eq(vehicles.userId, req.user!.userId),
       ),
     });
 
@@ -85,7 +76,7 @@ export const createTrip = async (
       throw new Error(
         `Seats cannot exceed vehicle's maximum capacity of ${
           vehicle.capacity || "unknown"
-        }`
+        }`,
       );
     }
 
@@ -174,7 +165,7 @@ export const createTrip = async (
 
 export const getMyTrips = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { type = "upcoming" } = req.query;
@@ -222,40 +213,15 @@ export const getMyTrips = async (
 // ): Promise<void> => {
 //   try {
 //     const {
-//       startLocation,
-//       endLocation,
-//       date,
-//       seats = "1",
-//       maxDistance = "2", // Default 2km for route matching
-//       maxTimeFlexibility = "30",
-//       maxFare,
-//       page = "1",
-//       limit = "10",
-//       // Coordinate-based search parameters
-//       pickupLat,
-//       pickupLng,
-//       destinationLat,
-//       destinationLng,
+//       startLat,
+//       startLng,
+//       endLat,
+//       endLng,
+//       seatsNeeded = 1,
+//       tripDate,
 //     } = req.query;
 
-//     const pageNumber = parseInt(page as string);
-//     const limitNumber = parseInt(limit as string);
-//     const offset = (pageNumber - 1) * limitNumber;
-//     const maxDistanceKm = parseFloat(maxDistance as string);
-
 //     const conditions = [eq(trips.status, "scheduled"), eq(trips.active, true)];
-
-//     console.log("\n🔍 SEARCH QUERY PARAMETERS:");
-//     console.log(`   Start Location: ${startLocation || "N/A"}`);
-//     console.log(`   End Location: ${endLocation || "N/A"}`);
-//     console.log(`   Date: ${date || "N/A"}`);
-//     console.log(
-//       `   Coordinates: ${
-//         pickupLat && pickupLng ? `(${pickupLat}, ${pickupLng})` : "N/A"
-//       }`
-//     );
-//     console.log(`   Seats Needed: ${seats}`);
-//     console.log(`   Max Distance: ${maxDistanceKm} km\n`);
 
 //     // If date is provided, filter by date
 //     if (date) {
@@ -292,7 +258,7 @@ export const getMyTrips = async (
 //     }
 
 //     // Always filter by available seats
-//    // conditions.push(gte(trips.seats, parseInt(seats as string)));
+//     // conditions.push(gte(trips.seats, parseInt(seats as string)));
 
 //     // Filter by max fare if provided
 //     // if (maxFare) {
@@ -368,7 +334,7 @@ export const getMyTrips = async (
 //               : "N/A"
 //           }`
 //         );
-//         console.log(`   Available Seats: ${trip.seats}`);
+//         console.log(`   Available Seats: ${trip.availableSeats}`);
 //         console.log(`   Driver Route (A → B):`);
 //         console.log(`      A (Start): ${trip.startLocation}`);
 //         console.log(`      B (End):   ${trip.endLocation}`);
@@ -855,9 +821,8 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
     const passengerStart = sql`ST_SetSRID(ST_MakePoint(${lng1}, ${lat1}), 4326)`;
     const passengerEnd = sql`ST_SetSRID(ST_MakePoint(${lng2}, ${lat2}), 4326)`;
 
-    // Get current date for filtering
-    const currentDate = new Date();
-    currentDate.setHours(0, 0, 0, 0);
+    // Get current date and time for filtering expired trips
+    const currentDateTime = new Date();
 
     const availableTrips = await db
       .select({
@@ -870,6 +835,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         startToPassengerDrop: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${passengerEnd}::geography)::numeric, 2)`,
         driverTripDistance: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${trips.endLocation}::geography)::numeric, 2)`,
         totalDistance: sql<number>`ROUND(ST_Distance(${trips.startLocation}::geography, ${trips.endLocation}::geography)::numeric, 2)`,
+        passengerTotalDistance: sql<number>`ROUND(ST_Distance(${passengerStart}::geography, ${passengerEnd}::geography)::numeric, 2)`,
 
         driver: {
           userId: users.userId,
@@ -880,7 +846,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         vehicle: {
           vehicleId: vehicles.vehicleId,
           model: vehicles.model,
-          type:vehicles.type
+          type: vehicles.type,
         },
       })
       .from(trips)
@@ -888,36 +854,48 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
       .innerJoin(vehicles, eq(trips.vehicleId, vehicles.vehicleId))
       .where(
         and(
+          // Driver's start location must be within search radius (circle around passenger start)
+          // Search radius = half of driver's total trip distance
           sql`ST_Distance(
-            ${trips.startLocation}::geography, 
-            ${passengerStart}::geography
-          ) <= (${trips.totalDistance} /2 * 1000)`,
+            ${passengerStart}::geography,
+            ${trips.startLocation}::geography
+          ) <= 5000`,
 
           // Passenger's drop location must not be beyond driver's end location
           sql`ST_Distance(
-            ${trips.startLocation}::geography, 
+            ${trips.endLocation}::geography,
             ${passengerEnd}::geography
-          ) <= ST_Distance(
-            ${trips.startLocation}::geography, 
-            ${trips.endLocation}::geography
+          ) <= (
+            ST_Distance(
+              ${trips.startLocation}::geography,
+              ${trips.endLocation}::geography
+            ) / 2
           )`,
 
           // Enough seats available
           sql`${trips.availableSeats} >= ${seats}`,
+
+          // Active filters
           eq(trips.active, true),
           eq(trips.status, "scheduled"),
           eq(users.active, true),
           eq(vehicles.active, true),
-          eq(sql`DATE(${trips.tripDate})`, tripDate),
+
+          // Date must match
+          sql`DATE(${trips.tripDate}) = ${tripDate}`,
+
+          // Exclude own trips
           ne(trips.driverId, req.user?.userId),
 
-          // Trip date must be current or future
-          sql`${trips.tripDate} >= ${currentDate.toISOString().split("T")[0]}`
-        )
+          // Filter out expired trips (date + time in the past)
+          sql`(${trips.tripDate}::timestamp + ${
+            trips.departureTime
+          }::time) > ${currentDateTime.toISOString()}`,
+        ),
       )
       .orderBy(
-        sql`(ST_Distance(${trips.startLocation}::geography, ${passengerStart}::geography) + 
-             ST_Distance(${trips.endLocation}::geography, ${passengerEnd}::geography))`
+        sql`(ST_Distance(${trips.startLocation}::geography, ${passengerStart}::geography) +
+             ST_Distance(${trips.endLocation}::geography, ${passengerEnd}::geography))`,
       );
 
     res.json({
@@ -928,11 +906,14 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         passengerEnd: { lat: lat2, lng: lng2 },
         seatsNeeded: seats,
         tripDate: parsedTripDate?.toISOString().split("T")[0] || "any",
-        minDate: currentDate.toISOString().split("T")[0],
+        searchRadius: "Half of each driver's trip distance",
+        currentDateTime: currentDateTime.toISOString(),
       },
       trips: availableTrips.map((trip) => ({
         tripId: trip.tripId,
         startAddress: trip.startAddress,
+        startLocation: trip.startLocation,
+        endLocation: trip.endLocation,
         endAddress: trip.endAddress,
         departureTime: trip.departureTime,
         tripDate: trip.tripDate,
@@ -948,8 +929,9 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           endDistance: `${(trip.endDistance / 1000).toFixed(2)} km`,
           totalDistance: `${(trip.totalDistance / 1000).toFixed(2)} km`,
           driverTripDistance: `${(trip.driverTripDistance / 1000).toFixed(
-            2
+            2,
           )} km`,
+          passengerTotalDistance: `${(trip.passengerTotalDistance / 1000).toFixed(2)} km`,
         },
 
         // Driver information
@@ -964,7 +946,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
         vehicle: {
           id: trip.vehicle.vehicleId,
           model: trip.vehicle.model,
-          type:trip.vehicle.type
+          type: trip.vehicle.type,
         },
       })),
     });
@@ -982,7 +964,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
 
 export const updateTripStatus = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
@@ -1003,7 +985,7 @@ export const updateTripStatus = async (
     const existingTrip = await db.query.trips.findFirst({
       where: and(
         eq(trips.tripId, parseInt(tripId)),
-        eq(trips.driverId, req.user!.userId)
+        eq(trips.driverId, req.user!.userId),
       ),
     });
 
@@ -1031,8 +1013,8 @@ export const updateTripStatus = async (
       .where(
         and(
           eq(trips.tripId, parseInt(tripId)),
-          eq(trips.driverId, req.user!.userId)
-        )
+          eq(trips.driverId, req.user!.userId),
+        ),
       )
       .returning();
 
@@ -1052,7 +1034,7 @@ export const updateTripStatus = async (
 
 export const cancelTrip = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
@@ -1068,7 +1050,7 @@ export const cancelTrip = async (
     const existingTrip = await db.query.trips.findFirst({
       where: and(
         eq(trips.tripId, parseInt(tripId)),
-        eq(trips.driverId, userId)
+        eq(trips.driverId, userId),
       ),
     });
 
@@ -1086,7 +1068,7 @@ export const cancelTrip = async (
       ["completed", "cancelled"].includes(existingTrip.status)
     ) {
       console.log(
-        `   ❌ Cannot cancel - trip is already ${existingTrip.status}`
+        `   ❌ Cannot cancel - trip is already ${existingTrip.status}`,
       );
       res.status(400).json({
         error: `Cannot cancel a ${existingTrip.status} trip`,
@@ -1108,7 +1090,7 @@ export const cancelTrip = async (
         updatedAt: new Date(),
       })
       .where(
-        and(eq(trips.tripId, parseInt(tripId)), eq(trips.driverId, userId))
+        and(eq(trips.tripId, parseInt(tripId)), eq(trips.driverId, userId)),
       )
       .returning();
 
@@ -1138,7 +1120,7 @@ export const cancelTrip = async (
 
 export const getTripDetails = async (
   req: express.Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
@@ -1204,30 +1186,35 @@ export const getTripDetails = async (
 };
 
 export const getOfferedRides = async (req: AuthRequest, res: Response) => {
-  const userId = req.user.userId;
+  try {
+    const userId = req.user.userId;
 
-  const rides = await db
-    .select({
-      tripId: trips.tripId,
-      startAddress: trips.startAddress,
-      endAddress: trips.endAddress,
-      tripDate: trips.tripDate,
-      departureTime: trips.departureTime,
-      availableSeats: trips.availableSeats,
-      expectedFare: trips.expectedFare,
-      status: trips.status,
-      requestCount: sql<number>`
+    const rides = await db
+      .select({
+        tripId: trips.tripId,
+        startAddress: trips.startAddress,
+        endAddress: trips.endAddress,
+        tripDate: trips.tripDate,
+        departureTime: trips.departureTime,
+        availableSeats: trips.availableSeats,
+        expectedFare: trips.expectedFare,
+        status: trips.status,
+        requestCount: sql<number>`
       COUNT(${bookings.bookingId})
       FILTER (WHERE ${bookings.status} = 'requested')
     `.as("requestCount"),
-    })
-    .from(trips)
-    .leftJoin(bookings, eq(bookings.tripId, trips.tripId))
-    .where(eq(trips.driverId, userId))
-    .groupBy(trips.tripId)
-    .orderBy(asc(trips.tripDate));
+      })
+      .from(trips)
+      .leftJoin(bookings, eq(bookings.tripId, trips.tripId))
+      .where(eq(trips.driverId, userId))
+      .groupBy(trips.tripId)
+      .orderBy(desc(trips.tripDate));
 
-  res.json({ rides });
+    res.json({ rides });
+  } catch (error) {
+    console.error("getOfferedsRides error:", error);
+    res.status(500).json({ message: "Failed to fetch offered rides" });
+  }
 };
 
 export const getRideRequests = async (req, res) => {
@@ -1246,7 +1233,10 @@ export const getRideRequests = async (req, res) => {
     .from(bookings)
     .innerJoin(users, eq(users.userId, bookings.booked_by))
     .where(
-      and(eq(bookings.tripId, Number(tripId)), eq(bookings.status, "requested"))
+      and(
+        eq(bookings.tripId, Number(tripId)),
+        eq(bookings.status, "requested"),
+      ),
     );
 
   res.json({ requests });

@@ -2,7 +2,7 @@ import { Response, Request } from "express";
 import { db } from "../db";
 import { bookings, trips, users, notifications } from "../db/schema";
 import { AuthRequest } from "../middleware/auth";
-import { eq, and, desc, sql, getTableColumns } from "drizzle-orm";
+import { eq, and, desc, sql, getTableColumns, asc } from "drizzle-orm";
 import { sendFirebaseNotification } from "../services/firebaseAdmin.service";
 import { reverseGeocode } from "../utils/geoUtils";
 
@@ -97,8 +97,8 @@ export const createBooking = async (
           tripId: parsedTripId,
           booked_by: userId,
           seatsBooked: parseInt(seatsBooked),
-          pickAddress: shortPickupAddress.shortAddress,
-          dropAddress: shortDropAddress.shortAddress,
+          pickAddress: shortPickupAddress.fullAddress,
+          dropAddress: shortDropAddress.fullAddress,
           pickupLocation,
           dropLocation,
           amount: finalAmount,
@@ -485,6 +485,120 @@ export const confirmPaymentReceived = async (
   } catch (error) {
     console.error("Confirm payment error:", error);
     res.status(500).json({ error: "Error confirming payment" });
+  }
+};
+
+export const startTrip = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { tripId } = req.params;
+    const driverId = req.user!.userId;
+
+  
+    // Verify the trip belongs to the driver
+    const trip = await db.query.trips.findFirst({
+      where: and(
+        eq(trips.tripId, parseInt(tripId)),
+        eq(trips.driverId, driverId)
+      ),
+    });
+
+    if (!trip) {
+      res.status(404).json({
+        error: "Trip not found or you are not authorized",
+      });
+      return;
+    }
+
+    // Check if trip can be started
+    if (trip.status === "completed") {
+      res.status(400).json({
+        error: "Trip is already completed",
+      });
+      return;
+    }
+
+    if (trip.status === "cancelled") {
+      res.status(400).json({
+        error: "Cannot start a cancelled trip",
+      });
+      return;
+    }
+
+    if (trip.status === "in_progress") {
+      res.status(400).json({
+        error: "Trip is already in progress",
+      });
+      return;
+    }
+
+    // Check if trip date is today or in the past
+    const tripDate = new Date(trip.tripDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    tripDate.setHours(0, 0, 0, 0);
+
+    if (tripDate > today) {
+      res.status(400).json({
+        error: "Cannot start a trip scheduled for a future date",
+        tripDate: trip.tripDate,
+      });
+      return;
+    }
+
+    // Get all accepted bookings for this trip
+    const acceptedBookings = await db.query.bookings.findMany({
+      where: and(
+        eq(bookings.tripId, parseInt(tripId)),
+        eq(bookings.status, "accepted")
+      ),
+    });
+
+    if (acceptedBookings.length === 0) {
+      res.status(400).json({
+        error: "Cannot start trip without any accepted passengers",
+      });
+      return;
+    }
+
+    // Update trip status to in_progress
+    const [startedTrip] = await db
+      .update(trips)
+      .set({
+        status: "in_progress",
+        updatedAt: new Date(),
+      })
+      .where(eq(trips.tripId, parseInt(tripId)))
+      .returning();
+
+    // Update all accepted bookings status to in_progress
+    await db
+      .update(bookings)
+      .set({
+        status: "in_progress",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(bookings.tripId, parseInt(tripId)),
+          eq(bookings.status, "accepted")
+        )
+      );
+
+    res.status(200).json({
+      message: "Trip started successfully",
+      trip: {
+        tripId: startedTrip.tripId,
+        status: startedTrip.status,
+        updatedAt: startedTrip.updatedAt,
+        passengersCount: acceptedBookings.length,
+      },
+    });
+  } catch (error) {
+    console.error("Start trip error:", error);
+    res.status(500).json({ error: "Error starting trip" });
   }
 };
 
@@ -1209,7 +1323,6 @@ export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
     const data = await db
       .select({
         ...getTableColumns(bookings),
-
         totalDistance: sql<number>`ROUND(ST_Distance(${bookings.pickupLocation}::geography, ${bookings.dropLocation}::geography)::numeric, 2)`,
         bookingId: bookings.bookingId,
         status: bookings.status,
@@ -1228,7 +1341,7 @@ export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
       .from(bookings)
       .innerJoin(trips, eq(bookings.tripId, trips.tripId))
       .where(eq(bookings.booked_by, userId))
-      .orderBy(desc(bookings.createdAt));
+      .orderBy(desc(bookings.createdAt))
 
     res.json(data);
   } catch (error) {

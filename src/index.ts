@@ -1,8 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { createServer } from "http";
-import { Server } from "socket.io";
 // import { migrate } from "drizzle-orm/node-postgres/migrator";
 // import db from "./db";
 // aadding for deployment
@@ -14,22 +12,12 @@ import bookingRoutes from "./routes/booking.routes";
 import notificationRoutes from "./routes/notification.routes";
 import documentRoutes from "./routes/document.routes";
 import config from "./config";
-import notificationSocket from "./sockets/notification.socket";
+
 
 dotenv.config();
 
 const app = express();
 
-const server = createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    credentials: true,
-    methods: ["GET", "POST"],
-  },
-});
-
-notificationSocket(io);
 // Middleware
 app.use(
   cors({
@@ -72,7 +60,7 @@ const startServer = async () => {
     console.log("Skipping migrations - database is already synced");
 
     // Start the server
-    server.listen(parseInt(config.port.toString()), "0.0.0.0", () => {
+    app.listen(parseInt(config.port.toString()), "0.0.0.0", () => {
       console.log(`Server is running on port ${config.port}`);
     });
   } catch (error) {

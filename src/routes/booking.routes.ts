@@ -13,6 +13,7 @@ import {
   rejectRideRequest,
   getMyBookedRides,
   cancelTrip,
+  startTrip,
 } from "../controllers/booking.controller";
 
 const router = Router();
@@ -40,6 +41,9 @@ router.post("/:bookingId/reject", auth, rejectRideRequest);
 
 // Confirm payment received for a booking (driver)
 router.post("/:bookingId/confirm-payment", auth, confirmPaymentReceived);
+
+// In your routes file (e.g., bookingRoutes.ts or tripRoutes.ts)
+router.post("/trip/:tripId/start", auth, startTrip);
 
 // Complete a trip (driver)
 router.post("/trip/:tripId/complete", auth, completeTrip);

@@ -31,6 +31,7 @@ router.patch("/:tripId/status", auth, updateTripStatus);
 // Cancel trip (protected)
 router.post("/:tripId/cancel", auth, cancelTrip);
 
+
 router.get("/offered-ride",auth,getOfferedRides)
 router.get("/:tripId/ride-requests",auth,getRideRequests)
 
