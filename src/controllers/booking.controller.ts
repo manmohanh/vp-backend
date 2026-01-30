@@ -9,7 +9,7 @@ import { reverseGeocode } from "../utils/geoUtils";
 // Create a new booking with COD payment
 export const createBooking = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const {
@@ -25,15 +25,15 @@ export const createBooking = async (
 
     const parsedTripId = parseInt(tripId);
 
-    console.log(seatsBooked)
+    console.log(seatsBooked);
 
     const shortPickupAddress = await reverseGeocode(
       pickupLocation.y,
-      pickupLocation.x
+      pickupLocation.x,
     );
     const shortDropAddress = await reverseGeocode(
       dropLocation.y,
-      dropLocation.x
+      dropLocation.x,
     );
 
     if (!parsedTripId || !Number.isInteger(parsedTripId)) {
@@ -218,7 +218,7 @@ export const createBooking = async (
 // Get all bookings for a user (passenger view)
 export const getUserBookings = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const userId = req.user!.userId;
@@ -275,7 +275,7 @@ export const getUserBookings = async (
 // Get a single booking by ID
 export const getBookingById = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const userId = req.user!.userId;
@@ -348,7 +348,7 @@ export const getBookingById = async (
 // Get all bookings for a specific trip (driver view)
 export const getTripBookings = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
@@ -358,7 +358,7 @@ export const getTripBookings = async (
     const trip = await db.query.trips.findFirst({
       where: and(
         eq(trips.tripId, parseInt(tripId)),
-        eq(trips.driverId, driverId)
+        eq(trips.driverId, driverId),
       ),
     });
 
@@ -373,7 +373,7 @@ export const getTripBookings = async (
     const tripBookings = await db.query.bookings.findMany({
       where: and(
         eq(bookings.tripId, parseInt(tripId)),
-        eq(bookings.status, "confirmed")
+        eq(bookings.status, "confirmed"),
       ),
       orderBy: [desc(bookings.createdAt)],
     });
@@ -385,7 +385,7 @@ export const getTripBookings = async (
           where: eq(users.userId, booking.tripId!),
         });
         return { ...booking, passenger };
-      })
+      }),
     );
 
     res.status(200).json({
@@ -424,7 +424,7 @@ export const getTripBookings = async (
 // Mark payment as received (driver action)
 export const confirmPaymentReceived = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { bookingId } = req.params;
@@ -490,18 +490,17 @@ export const confirmPaymentReceived = async (
 
 export const startTrip = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
     const driverId = req.user!.userId;
 
-  
     // Verify the trip belongs to the driver
     const trip = await db.query.trips.findFirst({
       where: and(
         eq(trips.tripId, parseInt(tripId)),
-        eq(trips.driverId, driverId)
+        eq(trips.driverId, driverId),
       ),
     });
 
@@ -552,7 +551,7 @@ export const startTrip = async (
     const acceptedBookings = await db.query.bookings.findMany({
       where: and(
         eq(bookings.tripId, parseInt(tripId)),
-        eq(bookings.status, "accepted")
+        eq(bookings.status, "accepted"),
       ),
     });
 
@@ -583,8 +582,8 @@ export const startTrip = async (
       .where(
         and(
           eq(bookings.tripId, parseInt(tripId)),
-          eq(bookings.status, "accepted")
-        )
+          eq(bookings.status, "accepted"),
+        ),
       );
 
     res.status(200).json({
@@ -605,19 +604,19 @@ export const startTrip = async (
 // Complete trip (driver action)
 export const completeTrip = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { tripId } = req.params;
     const driverId = req.user!.userId;
 
-    console.log(tripId)
+    console.log(tripId);
 
     // Verify the trip belongs to the driver
     const trip = await db.query.trips.findFirst({
       where: and(
         eq(trips.tripId, parseInt(tripId)),
-        eq(trips.driverId, driverId)
+        eq(trips.driverId, driverId),
       ),
     });
 
@@ -650,7 +649,7 @@ export const completeTrip = async (
 
     // Check if all payments are received
     const pendingPayments = tripBookings.filter(
-      (booking) => booking.paymentStatus !== "received"
+      (booking) => booking.paymentStatus !== "received",
     );
 
     // if (pendingPayments.length > 0) {
@@ -696,7 +695,7 @@ export const completeTrip = async (
 
 export const cancelTrip = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const tripId = Number(req.params.tripId);
@@ -709,12 +708,7 @@ export const cancelTrip = async (
         driverId: trips.driverId,
       })
       .from(trips)
-      .where(
-        and(
-          eq(trips.tripId, tripId),
-          eq(trips.driverId, driverId)
-        )
-      )
+      .where(and(eq(trips.tripId, tripId), eq(trips.driverId, driverId)))
       .limit(1)
       .then((rows) => rows[0]);
 
@@ -769,7 +763,6 @@ export const cancelTrip = async (
         .where(eq(bookings.tripId, tripId));
     });
 
-
     try {
       for (const booking of tripBookings) {
         const bookedUser = await db
@@ -781,7 +774,6 @@ export const cancelTrip = async (
 
         if (!bookedUser) continue;
 
-  
         await db.insert(notifications).values({
           receiver: booking.bookedBy,
           sender: driverId,
@@ -792,7 +784,6 @@ export const cancelTrip = async (
           message: `Your trip from ${booking.pickAddress} to ${booking.dropAddress} has been cancelled by the driver.`,
         });
 
-    
         if (bookedUser.expoPushToken) {
           await fetch("https://exp.host/--/api/v2/push/send", {
             method: "POST",
@@ -817,7 +808,6 @@ export const cancelTrip = async (
       }
     } catch (notificationError) {
       console.error("❌ Notification error:", notificationError);
-
     }
 
     res.status(200).json({
@@ -833,11 +823,10 @@ export const cancelTrip = async (
   }
 };
 
-
 // Get pending ride requests for driver
 export const getPendingRideRequests = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const driverId = req.user!.userId;
@@ -897,7 +886,7 @@ export const getPendingRideRequests = async (
               departureTime: trip?.departureTime,
             },
           };
-        })
+        }),
     );
 
     res.status(200).json({ requests: requestsWithDetails });
@@ -907,11 +896,9 @@ export const getPendingRideRequests = async (
   }
 };
 
-
-
 export const acceptRideRequest = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const bookingId = Number(req.params.bookingId);
@@ -1042,11 +1029,10 @@ export const acceptRideRequest = async (
   }
 };
 
-
 // Reject ride request (driver action)
 export const rejectRideRequest = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const bookingId = Number(req.params.bookingId);
@@ -1107,7 +1093,6 @@ export const rejectRideRequest = async (
         .then((rows) => rows[0]);
 
       if (bookedUser) {
-    
         await db.insert(notifications).values({
           receiver: booking.bookedBy,
           sender: driverId,
@@ -1117,7 +1102,6 @@ export const rejectRideRequest = async (
           title: "Ride Request Rejected",
           message: `Your ride request from ${booking.pickAddress} to ${booking.dropAddress} was declined by the driver.`,
         });
-
 
         if (bookedUser.expoPushToken) {
           await fetch("https://exp.host/--/api/v2/push/send", {
@@ -1143,7 +1127,6 @@ export const rejectRideRequest = async (
       }
     } catch (notifError) {
       console.error("❌ Notification error:", notifError);
-   
     }
 
     res.status(200).json({
@@ -1163,7 +1146,7 @@ export const rejectRideRequest = async (
 // Cancel booking (passenger action)
 export const cancelBooking = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const bookingId = Number(req.params.bookingId);
@@ -1184,10 +1167,7 @@ export const cancelBooking = async (
       .from(bookings)
       .innerJoin(trips, eq(bookings.tripId, trips.tripId))
       .where(
-        and(
-          eq(bookings.bookingId, bookingId),
-          eq(bookings.booked_by, userId)
-        )
+        and(eq(bookings.bookingId, bookingId), eq(bookings.booked_by, userId)),
       )
       .limit(1)
       .then((rows) => rows[0]);
@@ -1236,7 +1216,6 @@ export const cancelBooking = async (
         .where(eq(trips.tripId, booking.tripId));
     });
 
-
     try {
       const driver = await db
         .select()
@@ -1256,7 +1235,6 @@ export const cancelBooking = async (
         passenger?.firstname || passenger?.mobile || "A passenger";
 
       if (driver) {
-    
         await db.insert(notifications).values({
           receiver: driver.userId,
           sender: userId,
@@ -1267,7 +1245,6 @@ export const cancelBooking = async (
           message: `${passengerName} cancelled their booking (${seatsToReturn} seat(s)). Seats are now available again.`,
         });
 
- 
         if (driver.expoPushToken) {
           await fetch("https://exp.host/--/api/v2/push/send", {
             method: "POST",
@@ -1309,7 +1286,6 @@ export const cancelBooking = async (
   }
 };
 
-
 export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user.userId;
@@ -1341,11 +1317,81 @@ export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
       .from(bookings)
       .innerJoin(trips, eq(bookings.tripId, trips.tripId))
       .where(eq(bookings.booked_by, userId))
-      .orderBy(desc(bookings.createdAt))
+      .orderBy(desc(bookings.createdAt));
 
     res.json(data);
   } catch (error) {
     console.error("getMyBookedRides error:", error);
     res.status(500).json({ message: "Failed to fetch booked rides" });
+  }
+};
+
+export const pickup = async (req: AuthRequest, res: Response) => {
+  try {
+    const { bookingId } = req.params;
+
+    console.log({bookingId})
+
+    const [booking] = await db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.bookingId, Number(bookingId)))
+      .limit(1);
+
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const [updatedBooking] = await db
+      .update(bookings)
+      .set({
+        status: "picked_up",
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.bookingId, parseInt(bookingId)))
+      .returning();
+
+    return res.status(200).json({
+      success: true,
+      message: "Passenger picked up successfully",
+      booking: updatedBooking,
+    });
+  } catch (error) {
+    console.error("pickup passenger error:", error);
+    res.status(500).json({ error: "Error picking up the passenger" });
+  }
+};
+
+export const dropOff = async (req: AuthRequest, res: Response) => {
+  try {
+    const { bookingId } = req.params;
+
+    const [booking] = await db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.bookingId, Number(bookingId)))
+      .limit(1);
+
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const [updatedBooking] = await db
+      .update(bookings)
+      .set({
+        status: "dropped_off",
+        updatedAt: new Date(),
+      })
+      .where(eq(bookings.bookingId, Number(bookingId)))
+      .returning();
+
+    return res.status(200).json({
+      success: true,
+      message: "Passenger dropped off successfully",
+      booking: updatedBooking,
+    });
+  } catch (error) {
+    console.error("dropOff passenger error:", error);
+    res.status(500).json({ error: "Error droping off the passenger" });
   }
 };

@@ -40,7 +40,7 @@ export class OTPService {
           headers: {
             "Content-Type": "application/json",
           },
-        }
+        },
       );
 
       console.log("MSG91 Response:", response.data);
@@ -52,14 +52,14 @@ export class OTPService {
       } else {
         console.error(
           "MSG91 API returned non-success response:",
-          response.data
+          response.data,
         );
         return false;
       }
     } catch (error: any) {
       console.error(
         "Error sending OTP via MSG91:",
-        error.response?.data || error.message
+        error.response?.data || error.message,
       );
 
       // In development, log the OTP to console as fallback
@@ -109,7 +109,7 @@ export class OTPService {
         eq(otps.mobile, mobile),
         eq(otps.otp, otp),
         gt(otps.expiresAt, now),
-        eq(otps.verified, false)
+        eq(otps.verified, false),
       ),
     });
 

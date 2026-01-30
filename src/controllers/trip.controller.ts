@@ -748,6 +748,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
       endLng,
       seatsNeeded = 1,
       tripDate,
+      requestedTime,
     } = req.query;
 
     // Validate required coordinates
@@ -854,14 +855,11 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
       .innerJoin(vehicles, eq(trips.vehicleId, vehicles.vehicleId))
       .where(
         and(
-          // Driver's start location must be within search radius (circle around passenger start)
-          // Search radius = half of driver's total trip distance
           sql`ST_Distance(
             ${passengerStart}::geography,
             ${trips.startLocation}::geography
           ) <= 5000`,
 
-          // Passenger's drop location must not be beyond driver's end location
           sql`ST_Distance(
             ${trips.endLocation}::geography,
             ${passengerEnd}::geography
@@ -872,7 +870,6 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
             ) / 2
           )`,
 
-          // Enough seats available
           sql`${trips.availableSeats} >= ${seats}`,
 
           // Active filters

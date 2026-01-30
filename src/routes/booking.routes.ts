@@ -14,6 +14,8 @@ import {
   getMyBookedRides,
   cancelTrip,
   startTrip,
+  pickup,
+  dropOff,
 } from "../controllers/booking.controller";
 
 const router = Router();
@@ -35,6 +37,11 @@ router.get("/trip/:tripId", auth, getTripBookings);
 
 // Accept ride request (driver)
 router.post("/:bookingId/accept", auth, acceptRideRequest);
+
+//pick up (passenger)
+router.post("/:bookingId/pickup", auth, pickup);
+// dropOff (passenger)
+router.post("/:bookingId/dropoff", auth, dropOff);
 
 // Reject ride request (driver)
 router.post("/:bookingId/reject", auth, rejectRideRequest);
