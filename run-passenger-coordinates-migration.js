@@ -1,4 +1,4 @@
-const { Client } = require("pg");
+const { Client } = require("postgres");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();

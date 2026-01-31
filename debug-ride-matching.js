@@ -1,5 +1,5 @@
 const { drizzle } = require("drizzle-orm/node-postgres");
-const { Pool } = require("pg");
+const { Pool } = require("postgres");
 require("dotenv").config();
 
 // Haversine distance calculation (same as backend)

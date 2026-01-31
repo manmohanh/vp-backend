@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool } from "postgres";
 import { coupons } from "./src/db/schema.js";
 import { eq } from "drizzle-orm";
 import dotenv from "dotenv";

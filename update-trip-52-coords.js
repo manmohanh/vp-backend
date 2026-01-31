@@ -1,4 +1,4 @@
-const { Pool } = require("pg");
+const { Pool } = require("postgres");
 require("dotenv").config();
 
 async function updateTrip52() {

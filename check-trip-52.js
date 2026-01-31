@@ -1,5 +1,5 @@
 const { drizzle } = require("drizzle-orm/node-postgres");
-const { Pool } = require("pg");
+const { Pool } = require("postgres");
 require("dotenv").config();
 
 async function checkTrip52() {
