@@ -98,6 +98,9 @@ npm run dev
 
 ## Development
 
+   // "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    // "build": "npm install && tsc", 
+
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm start` - Start production server
