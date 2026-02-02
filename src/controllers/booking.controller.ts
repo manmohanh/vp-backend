@@ -1330,7 +1330,7 @@ export const pickup = async (req: AuthRequest, res: Response) => {
   try {
     const { bookingId } = req.params;
 
-    console.log({bookingId})
+    console.log({ bookingId });
 
     const [booking] = await db
       .select()

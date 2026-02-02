@@ -24,6 +24,7 @@
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.18.0",
     "postgres": "^3.4.7",
+    "razorpay": "^2.9.6",
     "socket.io": "^4.8.3",
     "zod": "^3.22.4"
   },

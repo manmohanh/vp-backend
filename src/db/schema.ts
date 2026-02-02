@@ -60,9 +60,9 @@ export const vehicles = pgTable(
   },
   (table) => ({
     licensePlateUnique: unique("vehicles_license_plate_unique").on(
-      table.licensePlate
+      table.licensePlate,
     ),
-  })
+  }),
 );
 
 // Define vehicle relations
@@ -74,7 +74,7 @@ export const vehiclesRelations = relations(
       references: [users.userId],
     }),
     trips: many(trips),
-  })
+  }),
 );
 
 // Trips Table
@@ -115,7 +115,7 @@ export const trips = pgTable(
     index("idx_end_location").using("gist", t.endLocation),
     index("idx_distance_flex").on(t.distanceFlexibility),
     index("idx_trip_date").on(t.tripDate),
-  ]
+  ],
 );
 
 // Define trip relations
@@ -178,7 +178,7 @@ export const bookings = pgTable("bookings", {
   paymentMethod: varchar("payment_method", { length: 20 }).default("cod"),
   paymentReceivedAt: timestamp("payment_received_at", { withTimezone: true }),
   paymentConfirmedBy: integer("payment_confirmed_by").references(
-    () => users.userId
+    () => users.userId,
   ),
   remarks: varchar("remarks", { length: 1000 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -261,7 +261,7 @@ export const coupons = pgTable(
   },
   (table) => ({
     shortcodeUnique: unique("coupons_shortcode_unique").on(table.shortcode),
-  })
+  }),
 );
 
 // Coupon Usage Table - to track which users have used which coupons
@@ -337,7 +337,7 @@ export const wallets = pgTable(
   },
   (table) => ({
     userIdUnique: unique("wallets_user_id_unique").on(table.userId),
-  })
+  }),
 );
 
 // Wallet Transactions Table
@@ -395,7 +395,7 @@ export const notifications = pgTable(
   (table) => ({
     userIdx: index("idx_notifications_receiver").on(table.receiver),
     readIdx: index("idx_notifications_read").on(table.receiver, table.isRead),
-  })
+  }),
 );
 
 // Define coupon relations
@@ -404,7 +404,7 @@ export const couponsRelations = relations(
   ({ many }: { many: any }) => ({
     couponUsages: many(couponUsage),
     payments: many(payments),
-  })
+  }),
 );
 
 // Define coupon usage relations
@@ -423,7 +423,7 @@ export const couponUsageRelations = relations(
       fields: [couponUsage.bookingId],
       references: [bookings.bookingId],
     }),
-  })
+  }),
 );
 
 // Define payment relations
@@ -438,5 +438,5 @@ export const paymentsRelations = relations(
       fields: [payments.couponId],
       references: [coupons.id],
     }),
-  })
+  }),
 );

@@ -11,8 +11,10 @@ import couponRoutes from "./routes/coupon.routes";
 import bookingRoutes from "./routes/booking.routes";
 import notificationRoutes from "./routes/notification.routes";
 import documentRoutes from "./routes/document.routes";
+import paymentRoutes from "./routes/payment.routes";
+import walletRoutes from "./routes/wallet.routes";
 import config from "./config";
-
+import { verifyPayment } from "./controllers/payment.controller";
 
 dotenv.config();
 
@@ -22,8 +24,15 @@ const app = express();
 app.use(
   cors({
     origin: "*",
-  })
+  }),
 );
+
+app.post(
+  "/api/payments/verify",
+  express.raw({ type: "application/json" }),
+  verifyPayment,
+);
+
 app.use(express.json());
 
 // Routes
@@ -39,6 +48,8 @@ app.use("/api/coupons", couponRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/documents", documentRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/wallet", walletRoutes);
 
 // Error handling middleware
 app.use(
@@ -46,11 +57,11 @@ app.use(
     err: Error,
     _req: express.Request,
     res: express.Response,
-    _next: express.NextFunction
+    _next: express.NextFunction,
   ) => {
     console.error(err.stack);
     res.status(500).json({ error: "Something went wrong!" });
-  }
+  },
 );
 
 // Start server
