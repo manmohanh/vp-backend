@@ -29,8 +29,10 @@ router.get("/my-bookings", auth, getUserBookings);
 // Get pending ride requests (driver)
 router.get("/ride-requests/pending", auth, getPendingRideRequests);
 
+router.get("/my-rides", auth, getMyBookedRides);
+
 // Get a single booking by ID (passenger or driver)
-// router.get("/:bookingId", auth, getBookingById);
+router.get("/:bookingId", auth, getBookingById);
 
 // Get bookings for a specific trip (driver)
 router.get("/trip/:tripId", auth, getTripBookings);
@@ -60,7 +62,5 @@ router.post("/trip/:tripId/cancel", auth, cancelTrip);
 
 // Cancel a booking (passenger)
 router.post("/:bookingId/cancel", auth, cancelBooking);
-
-router.get("/my-rides", auth, getMyBookedRides);
 
 export default router;

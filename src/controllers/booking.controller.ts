@@ -6,7 +6,6 @@ import { eq, and, desc, sql, getTableColumns, asc } from "drizzle-orm";
 import { sendFirebaseNotification } from "../services/firebaseAdmin.service";
 import { reverseGeocode } from "../utils/geoUtils";
 
-// Create a new booking with COD payment
 export const createBooking = async (
   req: AuthRequest,
   res: Response,
@@ -273,77 +272,6 @@ export const getUserBookings = async (
 };
 
 // Get a single booking by ID
-export const getBookingById = async (
-  req: AuthRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const userId = req.user!.userId;
-    const { bookingId } = req.params;
-
-    const booking = await db.query.bookings.findFirst({
-      where: eq(bookings.bookingId, parseInt(bookingId)),
-      with: {
-        trip: {
-          with: {
-            driver: {
-              columns: {
-                firstname: true,
-                lastname: true,
-                mobile: true,
-                photo: true,
-              },
-            },
-            vehicle: {
-              columns: {
-                model: true,
-                licensePlate: true,
-                type: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!booking) {
-      res.status(404).json({ error: "Booking not found" });
-      return;
-    }
-
-    // Check if user is authorized to view this booking (simplified check)
-    if (booking.booked_by !== userId) {
-      res.status(403).json({ error: "Unauthorized to view this booking" });
-      return;
-    }
-
-    res.status(200).json({
-      booking: {
-        bookingId: booking.bookingId,
-        tripId: booking.tripId,
-        user: booking.booked_by,
-        seatsBooked: booking.seatsBooked,
-        status: booking.status,
-        startLocation: booking.pickupLocation,
-        endLocation: booking.dropLocation,
-        departureTime: booking.dropTime,
-        arrivalTime: booking.pickupLocation,
-        amount: booking.amount,
-        paymentMethod: booking.paymentMethod,
-        paymentStatus: booking.paymentStatus,
-        paymentReceivedAt: booking.paymentReceivedAt,
-        paymentConfirmedBy: booking.paymentConfirmedBy,
-        remarks: booking.remarks,
-        trip: booking.trip,
-        createdAt: booking.createdAt,
-        updatedAt: booking.updatedAt,
-      },
-    });
-  } catch (error) {
-    console.error("Get booking by ID error:", error);
-    res.status(500).json({ error: "Error fetching booking details" });
-  }
-};
 
 // Get all bookings for a specific trip (driver view)
 export const getTripBookings = async (
@@ -1290,6 +1218,13 @@ export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user.userId;
 
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 5;
+
+    const skip = (page - 1) * limit;
+
+    console.log(skip);
+
     if (!userId) {
       return res.status(404).json({
         message: "User not found",
@@ -1317,7 +1252,9 @@ export const getMyBookedRides = async (req: AuthRequest, res: Response) => {
       .from(bookings)
       .innerJoin(trips, eq(bookings.tripId, trips.tripId))
       .where(eq(bookings.booked_by, userId))
-      .orderBy(desc(bookings.createdAt));
+      .orderBy(desc(bookings.createdAt))
+      .limit(limit)
+      .offset(skip);
 
     res.json(data);
   } catch (error) {
@@ -1393,5 +1330,102 @@ export const dropOff = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error("dropOff passenger error:", error);
     res.status(500).json({ error: "Error droping off the passenger" });
+  }
+};
+
+export const getBookingById = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const { bookingId } = req.params;
+
+    const booking = await db.query.bookings.findFirst({
+      where: eq(bookings.bookingId, parseInt(bookingId)),
+      with: {
+        bookedBy: {
+          columns: {
+            userId: true,
+            firstname: true,
+            lastname: true,
+            mobile: true,
+            photo: true,
+            email: true,
+          },
+        },
+        trip: {
+          columns: {
+            startLocation: false,
+            endLocation: false,
+          },
+          with: {
+            driver: {
+              columns: {
+                firstname: true,
+                lastname: true,
+                mobile: true,
+                photo: true,
+              },
+            },
+            vehicle: {
+              columns: {
+                model: true,
+                licensePlate: true,
+                type: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!booking) {
+      res.status(404).json({ error: "Booking not found" });
+      return;
+    }
+
+    const [distanceRow] = await db.execute<{ distance_km: string }>(
+      sql`
+        SELECT ROUND(
+          (ST_DistanceSphere(
+            ST_SetSRID(ST_MakePoint(${booking.pickupLocation.x}, ${booking.pickupLocation.y}), 4326),
+            ST_SetSRID(ST_MakePoint(${booking.dropLocation.x},  ${booking.dropLocation.y}),  4326)
+          ) / 1000)::numeric,
+          2
+        ) AS distance_km
+      `,
+    );
+
+    const distanceKm = distanceRow?.distance_km ?? null;
+
+    res.status(200).json({
+      booking: {
+        bookingId: booking.bookingId,
+        tripId: booking.tripId,
+        seatsBooked: booking.seatsBooked,
+        status: booking.status,
+        pickupAddress: booking.pickAddress,
+        dropAddress: booking.dropAddress,
+        pickupLocation: booking.pickupLocation,
+        dropLocation: booking.dropLocation,
+        pickupTime: booking.pickupTime,
+        dropTime: booking.dropTime,
+        distanceKm,
+        passenger: booking.bookedBy,
+        amount: booking.amount,
+        paymentMethod: booking.paymentMethod,
+        paymentStatus: booking.paymentStatus,
+        paymentReceivedAt: booking.paymentReceivedAt,
+        paymentConfirmedBy: booking.paymentConfirmedBy,
+        remarks: booking.remarks,
+        trip: booking.trip,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error("Get booking by ID error:", error);
+    res.status(500).json({ error: "Error fetching booking details" });
   }
 };

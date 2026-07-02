@@ -848,6 +848,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           vehicleId: vehicles.vehicleId,
           model: vehicles.model,
           type: vehicles.type,
+          number: vehicles.licensePlate,
         },
       })
       .from(trips)
@@ -863,12 +864,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           sql`ST_Distance(
             ${trips.endLocation}::geography,
             ${passengerEnd}::geography
-          ) <= (
-            ST_Distance(
-              ${trips.startLocation}::geography,
-              ${trips.endLocation}::geography
-            ) / 2
-          )`,
+          ) <= 5000`,
 
           sql`${trips.availableSeats} >= ${seats}`,
 
@@ -890,10 +886,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           }::time) > ${currentDateTime.toISOString()}`,
         ),
       )
-      .orderBy(
-        sql`(ST_Distance(${trips.startLocation}::geography, ${passengerStart}::geography) +
-             ST_Distance(${trips.endLocation}::geography, ${passengerEnd}::geography))`,
-      );
+      .orderBy(desc(trips.departureTime));
 
     res.json({
       message: "success",
@@ -944,6 +937,7 @@ export const searchTrips = async (req: AuthRequest, res: Response) => {
           id: trip.vehicle.vehicleId,
           model: trip.vehicle.model,
           type: trip.vehicle.type,
+          number: trip.vehicle.number,
         },
       })),
     });
@@ -1073,7 +1067,6 @@ export const cancelTrip = async (
       return;
     }
 
-    // Update trip status to cancelled_by_rider
     const [cancelledTrip] = await db
       .update(trips)
       .set({
@@ -1185,6 +1178,9 @@ export const getTripDetails = async (
 export const getOfferedRides = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user.userId;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 3;
+    const skip = (page - 1) * limit;
 
     const rides = await db
       .select({
@@ -1205,7 +1201,9 @@ export const getOfferedRides = async (req: AuthRequest, res: Response) => {
       .leftJoin(bookings, eq(bookings.tripId, trips.tripId))
       .where(eq(trips.driverId, userId))
       .groupBy(trips.tripId)
-      .orderBy(desc(trips.tripDate));
+      .orderBy(desc(trips.tripDate))
+      .limit(Number(limit))
+      .offset(skip);
 
     res.json({ rides });
   } catch (error) {

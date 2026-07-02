@@ -48,7 +48,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         usertype: newUser.usertype,
       },
       config.jwt.secret!,
-      { expiresIn: config.jwt.expiresIn }
+      { expiresIn: config.jwt.expiresIn },
     );
 
     res.status(201).json({
@@ -69,7 +69,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
 export const initiateLogin = async (
   req: Request,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const { mobile } = req.body;
@@ -98,10 +98,12 @@ export const initiateLogin = async (
       user = newUser;
     }
 
-    // Generate and send OTP
-    const otp = await OTPService.createOTP(mobile, user.userId);
+ 
 
+    // Generate and send OTP
+    const otp = await OTPService.createOTP(mobile, user.userId,user.usertype);
     console.log("OTP ", otp);
+
     // In a production environment, you would send the OTP via SMS
     // For development, we'll just return it in the response
     res.json({
@@ -149,7 +151,7 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
         usertype: user.usertype,
       },
       config.jwt.secret!,
-      { expiresIn: config.jwt.expiresIn }
+      { expiresIn: config.jwt.expiresIn },
     );
 
     // Update last login
@@ -176,7 +178,7 @@ export const verifyOTP = async (req: Request, res: Response): Promise<void> => {
         isVerified: user.isVerified,
       },
       token,
-      isNewUser: !user.firstname || !user.lastname,
+      isNewUser: !user.firstname,
     });
   } catch (error) {
     console.error("OTP verification error:", error);
@@ -226,7 +228,7 @@ export const completeProfile = async (req: AuthRequest, res: Response) => {
 
 export const getProfile = async (
   req: AuthRequest,
-  res: Response
+  res: Response,
 ): Promise<void> => {
   try {
     const user = await db.query.users.findFirst({
@@ -301,10 +303,7 @@ export const updatePushToken = async (req: AuthRequest, res: Response) => {
     const { expoPushToken } = req.body;
 
     // Allow null (logout / disable notifications)
-    if (
-      expoPushToken !== null &&
-      typeof expoPushToken !== "string"
-    ) {
+    if (expoPushToken !== null && typeof expoPushToken !== "string") {
       return res.status(400).json({
         error: "expoPushToken must be a string or null",
       });
@@ -329,7 +328,6 @@ export const updatePushToken = async (req: AuthRequest, res: Response) => {
   }
 };
 
-
 export const getStats = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.userId;
@@ -341,8 +339,11 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       .where(
         and(
           eq(bookings.tripId, userId),
-          or(eq(bookings.status, "completed"), eq(bookings.status, "confirmed"))
-        )
+          or(
+            eq(bookings.status, "completed"),
+            eq(bookings.status, "confirmed"),
+          ),
+        ),
       );
 
     // Count trips as driver (completed trips)

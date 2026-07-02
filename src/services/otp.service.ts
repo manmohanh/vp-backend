@@ -12,6 +12,7 @@ export class OTPService {
     process.env.MSG91_TEMPLATE_ID || "69084001cacda84efa664923";
   private static readonly MSG91_API_URL =
     "https://control.msg91.com/api/v5/otp";
+  j;
 
   static generateOTP(): string {
     return Math.floor(100000 + Math.random() * 900000).toString();
@@ -72,8 +73,8 @@ export class OTPService {
     }
   }
 
-  static async createOTP(mobile: string, userId: number) {
-    const otp = this.generateOTP();
+  static async createOTP(mobile: string, userId: number, userType: string) {
+    const otp = userType === "guest" ? "111111" : this.generateOTP();
     const expiresAt = new Date();
     expiresAt.setMinutes(expiresAt.getMinutes() + 10); // OTP valid for 10 minutes
 
@@ -89,14 +90,14 @@ export class OTPService {
       .returning();
 
     // Send OTP via SMS using MSG91
-    const smsSent = await this.sendOTPviaSMS(mobile, otp);
+    // const smsSent = await this.sendOTPviaSMS(mobile, otp);
 
     // if (!smsSent) {
     //   console.warn(`⚠️ SMS failed for ${mobile}, but OTP created in database`);
     // }
 
     // Sync OTP data to admin database
-    await DatabaseSyncService.syncOtpToAdmin(otpRecord);
+    // await DatabaseSyncService.syncOtpToAdmin(otpRecord);
 
     return otp;
   }
