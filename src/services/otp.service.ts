@@ -90,11 +90,11 @@ export class OTPService {
       .returning();
 
     // Send OTP via SMS using MSG91
-    // const smsSent = await this.sendOTPviaSMS(mobile, otp);
+    const smsSent = await this.sendOTPviaSMS(mobile, otp);
 
-    // if (!smsSent) {
-    //   console.warn(`⚠️ SMS failed for ${mobile}, but OTP created in database`);
-    // }
+    if (!smsSent) {
+      console.warn(`⚠️ SMS failed for ${mobile}, but OTP created in database`);
+    }
 
     // Sync OTP data to admin database
     // await DatabaseSyncService.syncOtpToAdmin(otpRecord);
